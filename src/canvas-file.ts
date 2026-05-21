@@ -1,5 +1,5 @@
 import {App, TFile} from "obsidian";
-import {normalizeStrokeHardness} from "./settings";
+import {normalizeStrokeHardness, normalizeStrokeOpacity} from "./settings";
 import {
 	CanvasDrawingData,
 	CanvasStroke,
@@ -59,6 +59,7 @@ function toCanvasStroke(value: unknown): CanvasStroke | null {
 		color: typeof value.color === "string" && value.color.length > 0 ? value.color : "#ff5a5f",
 		width: toPositiveNumber(value.width, 4),
 		hardness: normalizeStrokeHardness(value.hardness),
+		opacity: normalizeStrokeOpacity(value.opacity),
 		points,
 		createdAt: toPositiveNumber(value.createdAt, Date.now()),
 	};

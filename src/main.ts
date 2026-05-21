@@ -9,6 +9,7 @@ import {
 	normalizeDrawInCanvasSettings,
 	normalizeFreehandSliderValue,
 	normalizeStrokeHardness,
+	normalizeStrokeOpacity,
 	normalizeStrokeWidth,
 } from "./settings";
 
@@ -154,6 +155,18 @@ export default class DrawInCanvasPlugin extends Plugin {
 		void this.saveSettings();
 	}
 
+	setStrokeOpacity(opacity: number): void {
+		const strokeOpacity = normalizeStrokeOpacity(opacity);
+		this.settings.strokeOpacity = strokeOpacity;
+
+		for (const layer of this.layers) {
+			layer.setSettings(this.settings);
+		}
+
+		this.activeLayer?.setSettings(this.settings);
+		void this.saveSettings();
+	}
+
 	setFreehandSliderValue(setting: FreehandSliderSetting, value: number): void {
 		this.settings[setting] = normalizeFreehandSliderValue(setting, value);
 		this.refreshActiveLayerSettings();
@@ -223,6 +236,8 @@ export default class DrawInCanvasPlugin extends Plugin {
 				this.setStrokeWidth(width);
 			}, (hardness) => {
 				this.setStrokeHardness(hardness);
+			}, (opacity) => {
+				this.setStrokeOpacity(opacity);
 			}, (setting, value) => {
 				this.setFreehandSliderValue(setting, value);
 			}, (enabled) => {

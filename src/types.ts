@@ -11,6 +11,7 @@ export interface CanvasStroke {
 	color: string;
 	width: number;
 	hardness: number;
+	opacity: number;
 	points: StrokePoint[];
 	createdAt: number;
 }

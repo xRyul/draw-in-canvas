@@ -9,6 +9,10 @@ export const STROKE_HARDNESS_MIN = 0;
 export const STROKE_HARDNESS_MAX = 100;
 export const STROKE_HARDNESS_STEP = 1;
 export const DEFAULT_STROKE_HARDNESS = 100;
+export const STROKE_OPACITY_MIN = 1;
+export const STROKE_OPACITY_MAX = 100;
+export const STROKE_OPACITY_STEP = 1;
+export const DEFAULT_STROKE_OPACITY = 100;
 export const FREEHAND_THINNING_MIN = -0.99;
 export const FREEHAND_THINNING_MAX = 0.99;
 export const FREEHAND_THINNING_STEP = 0.01;
@@ -76,6 +80,7 @@ export interface DrawInCanvasSettings {
 	strokeColor: string;
 	strokeWidth: number;
 	strokeHardness: number;
+	strokeOpacity: number;
 	beautifulStrokes: boolean;
 	strokeThinning: number;
 	strokeStreamline: number;
@@ -88,6 +93,7 @@ export const DEFAULT_SETTINGS: DrawInCanvasSettings = {
 	strokeColor: "#ff5a5f",
 	strokeWidth: DEFAULT_STROKE_WIDTH,
 	strokeHardness: DEFAULT_STROKE_HARDNESS,
+	strokeOpacity: DEFAULT_STROKE_OPACITY,
 	beautifulStrokes: false,
 	strokeThinning: DEFAULT_FREEHAND_THINNING,
 	strokeStreamline: DEFAULT_FREEHAND_STREAMLINE,
@@ -118,6 +124,17 @@ export function normalizeStrokeHardness(value: unknown): number {
 	return Math.min(STROKE_HARDNESS_MAX, Math.max(STROKE_HARDNESS_MIN, steppedValue));
 }
 
+export function normalizeStrokeOpacity(value: unknown): number {
+	const numericValue = typeof value === "number" ? value : Number(value);
+
+	if (!Number.isFinite(numericValue)) {
+		return DEFAULT_STROKE_OPACITY;
+	}
+
+	const steppedValue = Math.round(numericValue / STROKE_OPACITY_STEP) * STROKE_OPACITY_STEP;
+	return Math.min(STROKE_OPACITY_MAX, Math.max(STROKE_OPACITY_MIN, steppedValue));
+}
+
 export function normalizeFreehandSliderValue(setting: FreehandSliderSetting, value: unknown): number {
 	const slider = FREEHAND_SLIDER_SETTINGS[setting];
 	const numericValue = typeof value === "number" ? value : Number(value);
@@ -138,6 +155,7 @@ export function normalizeDrawInCanvasSettings(settings: Partial<DrawInCanvasSett
 		strokeColor: settings.strokeColor?.trim() || DEFAULT_SETTINGS.strokeColor,
 		strokeWidth: normalizeStrokeWidth(settings.strokeWidth),
 		strokeHardness: normalizeStrokeHardness(settings.strokeHardness),
+		strokeOpacity: normalizeStrokeOpacity(settings.strokeOpacity),
 		beautifulStrokes: settings.beautifulStrokes === true,
 		strokeThinning: normalizeFreehandSliderValue("strokeThinning", settings.strokeThinning),
 		strokeStreamline: normalizeFreehandSliderValue("strokeStreamline", settings.strokeStreamline),
@@ -201,6 +219,17 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 				.setDynamicTooltip()
 				.onChange((value) => {
 					this.plugin.setStrokeHardness(value);
+				}));
+
+		new Setting(containerEl)
+			.setName("Stroke opacity")
+			.setDesc("Controls how transparent new strokes are, like brush opacity.")
+			.addSlider((slider) => slider
+				.setLimits(STROKE_OPACITY_MIN, STROKE_OPACITY_MAX, STROKE_OPACITY_STEP)
+				.setValue(normalizeStrokeOpacity(this.plugin.settings.strokeOpacity))
+				.setDynamicTooltip()
+				.onChange((value) => {
+					this.plugin.setStrokeOpacity(value);
 				}));
 
 		new Setting(containerEl)

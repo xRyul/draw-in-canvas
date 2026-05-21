@@ -8,11 +8,15 @@ import {
 	STROKE_HARDNESS_MAX,
 	STROKE_HARDNESS_MIN,
 	STROKE_HARDNESS_STEP,
+	STROKE_OPACITY_MAX,
+	STROKE_OPACITY_MIN,
+	STROKE_OPACITY_STEP,
 	STROKE_WIDTH_MAX,
 	STROKE_WIDTH_MIN,
 	STROKE_WIDTH_STEP,
 	normalizeFreehandSliderValue,
 	normalizeStrokeHardness,
+	normalizeStrokeOpacity,
 	normalizeStrokeWidth,
 } from "./settings";
 import {
@@ -142,6 +146,7 @@ export class DrawingLayer {
 	private readonly requestSetStrokeColor: (color: string) => void;
 	private readonly requestSetStrokeWidth: (width: number) => void;
 	private readonly requestSetStrokeHardness: (hardness: number) => void;
+	private readonly requestSetStrokeOpacity: (opacity: number) => void;
 	private readonly requestSetFreehandSliderValue: (setting: FreehandSliderSetting, value: number) => void;
 	private readonly requestSetBeautifulStrokes: (enabled: boolean) => void;
 	private settings: DrawInCanvasSettings;
@@ -198,6 +203,7 @@ export class DrawingLayer {
 		requestSetStrokeColor: (color: string) => void,
 		requestSetStrokeWidth: (width: number) => void,
 		requestSetStrokeHardness: (hardness: number) => void,
+		requestSetStrokeOpacity: (opacity: number) => void,
 		requestSetFreehandSliderValue: (setting: FreehandSliderSetting, value: number) => void,
 		requestSetBeautifulStrokes: (enabled: boolean) => void,
 	) {
@@ -208,6 +214,7 @@ export class DrawingLayer {
 		this.requestSetStrokeColor = requestSetStrokeColor;
 		this.requestSetStrokeWidth = requestSetStrokeWidth;
 		this.requestSetStrokeHardness = requestSetStrokeHardness;
+		this.requestSetStrokeOpacity = requestSetStrokeOpacity;
 		this.requestSetFreehandSliderValue = requestSetFreehandSliderValue;
 		this.requestSetBeautifulStrokes = requestSetBeautifulStrokes;
 	}
@@ -606,7 +613,7 @@ export class DrawingLayer {
 		handwritingControlsEl?.setAttribute("aria-disabled", (!this.settings.beautifulStrokes).toString());
 
 		this.syncPaletteSlider(
-			".draw-in-canvas-stroke-width-slider:not(.draw-in-canvas-freehand-slider):not(.draw-in-canvas-stroke-hardness-slider)",
+			".draw-in-canvas-stroke-width-slider:not(.draw-in-canvas-freehand-slider):not(.draw-in-canvas-stroke-hardness-slider):not(.draw-in-canvas-stroke-opacity-slider)",
 			".draw-in-canvas-stroke-width-value",
 			normalizeStrokeWidth(this.settings.strokeWidth),
 			formatStrokeWidth,
@@ -617,6 +624,13 @@ export class DrawingLayer {
 			".draw-in-canvas-stroke-hardness-value",
 			normalizeStrokeHardness(this.settings.strokeHardness),
 			formatStrokeHardness,
+		);
+
+		this.syncPaletteSlider(
+			".draw-in-canvas-stroke-opacity-slider",
+			".draw-in-canvas-stroke-opacity-value",
+			normalizeStrokeOpacity(this.settings.strokeOpacity),
+			formatStrokeOpacity,
 		);
 
 		for (const setting of getFreehandSliderSettingKeys()) {
@@ -676,6 +690,7 @@ export class DrawingLayer {
 		strokeSectionEl.appendChild(this.createPaletteSectionTitleEl("Stroke"));
 		strokeSectionEl.appendChild(this.createStrokeWidthSliderControlEl());
 		strokeSectionEl.appendChild(this.createStrokeHardnessSliderControlEl());
+		strokeSectionEl.appendChild(this.createStrokeOpacitySliderControlEl());
 		controlEl.appendChild(strokeSectionEl);
 		controlEl.appendChild(this.createHandwritingControlsEl());
 
@@ -734,6 +749,34 @@ export class DrawingLayer {
 			sliderEl,
 		);
 		controlEl.querySelector("output")?.classList.add("draw-in-canvas-stroke-hardness-value");
+		return controlEl;
+	}
+
+	private createStrokeOpacitySliderControlEl(): HTMLElement {
+		const inputId = createStrokeId();
+		const sliderEl = document.createElement("input");
+		sliderEl.id = inputId;
+		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-opacity-slider");
+		sliderEl.type = "range";
+		sliderEl.min = STROKE_OPACITY_MIN.toString();
+		sliderEl.max = STROKE_OPACITY_MAX.toString();
+		sliderEl.step = STROKE_OPACITY_STEP.toString();
+		sliderEl.value = normalizeStrokeOpacity(this.settings.strokeOpacity).toString();
+		sliderEl.setAttribute("aria-label", "Stroke opacity");
+
+		this.colorPaletteDisposers.push(
+			this.addListener(sliderEl, "keydown", this.handleStrokeWidthSliderKeyDown),
+			this.addListener(sliderEl, "input", this.handleStrokeOpacitySliderInput),
+		);
+
+		const controlEl = createSliderControlEl(
+			inputId,
+			"Opacity",
+			"draw-in-canvas-stroke-width-value",
+			formatStrokeOpacity(normalizeStrokeOpacity(this.settings.strokeOpacity)),
+			sliderEl,
+		);
+		controlEl.querySelector("output")?.classList.add("draw-in-canvas-stroke-opacity-value");
 		return controlEl;
 	}
 
@@ -856,6 +899,18 @@ export class DrawingLayer {
 		this.syncColorPaletteSelection();
 	}
 
+	private setStrokeOpacity(opacity: number): void {
+		const strokeOpacity = normalizeStrokeOpacity(opacity);
+
+		if (strokeOpacity === normalizeStrokeOpacity(this.settings.strokeOpacity)) {
+			return;
+		}
+
+		this.settings = {...this.settings, strokeOpacity};
+		this.requestSetStrokeOpacity(strokeOpacity);
+		this.syncColorPaletteSelection();
+	}
+
 	private setFreehandSliderValue(setting: FreehandSliderSetting, value: number): void {
 		const nextValue = normalizeFreehandSliderValue(setting, value);
 
@@ -961,6 +1016,7 @@ export class DrawingLayer {
 		previewEl.setCssProps({
 			"--draw-in-canvas-stroke-width-preview-size": `${Math.max(4, strokeWidth)}px`,
 			"--draw-in-canvas-stroke-width-preview-color": this.settings.strokeColor,
+			"--draw-in-canvas-stroke-width-preview-opacity": formatStrokeOpacityRatio(this.settings.strokeOpacity),
 		});
 
 		this.positionStrokeWidthPreview(state.x, state.y);
@@ -1139,6 +1195,7 @@ export class DrawingLayer {
 	private updateVisibleStrokePathEl(pathEl: SVGPathElement, stroke: CanvasStroke, isComplete = true): void {
 		pathEl.classList.toggle("mod-handwritten", this.settings.beautifulStrokes);
 		pathEl.setAttribute("pointer-events", "none");
+		pathEl.setAttribute("opacity", formatStrokeOpacityRatio(stroke.opacity));
 		this.applyStrokeHardness(pathEl, stroke);
 
 		if (this.settings.beautifulStrokes) {
@@ -1231,6 +1288,7 @@ export class DrawingLayer {
 			color: this.settings.strokeColor,
 			width: this.settings.strokeWidth,
 			hardness: this.settings.strokeHardness,
+			opacity: this.settings.strokeOpacity,
 			points: [point],
 			createdAt: Date.now(),
 		};
@@ -1448,6 +1506,16 @@ export class DrawingLayer {
 		}
 
 		this.setStrokeHardness(Number(event.currentTarget.value));
+	};
+
+	private readonly handleStrokeOpacitySliderInput = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		this.setStrokeOpacity(Number(event.currentTarget.value));
 	};
 
 	private readonly handleFreehandSliderInput = (event: Event): void => {
@@ -2783,6 +2851,14 @@ function formatStrokeWidth(width: number): string {
 
 function formatStrokeHardness(hardness: number): string {
 	return `${normalizeStrokeHardness(hardness)}%`;
+}
+
+function formatStrokeOpacity(opacity: number): string {
+	return `${normalizeStrokeOpacity(opacity)}%`;
+}
+
+function formatStrokeOpacityRatio(opacity: number): string {
+	return (normalizeStrokeOpacity(opacity) / 100).toString();
 }
 
 function getStrokeHardnessBlurRadius(stroke: CanvasStroke): number {

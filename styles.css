@@ -251,6 +251,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	border: 1px solid var(--background-primary);
 	border-radius: 50%;
 	background: var(--draw-in-canvas-stroke-width-preview-color, currentColor);
+	opacity: var(--draw-in-canvas-stroke-width-preview-opacity, 1);
 	box-shadow: 0 0 0 1px var(--background-modifier-border);
 }
 
