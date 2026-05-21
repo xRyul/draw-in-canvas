@@ -610,10 +610,12 @@ export class DrawingLayer {
 
 		const labelEl = document.createElement("label");
 		labelEl.htmlFor = inputId;
-		labelEl.textContent = "Stroke size";
+		labelEl.textContent = "Size";
 
-		const valueEl = document.createElement("span");
+		const valueEl = document.createElement("output");
 		valueEl.classList.add("draw-in-canvas-stroke-width-value");
+		valueEl.setAttribute("for", inputId);
+		valueEl.setAttribute("aria-live", "polite");
 		valueEl.textContent = formatStrokeWidth(normalizeStrokeWidth(this.settings.strokeWidth));
 
 		headerEl.append(labelEl, valueEl);
@@ -711,16 +713,11 @@ export class DrawingLayer {
 
 		const strokeWidth = normalizeStrokeWidth(width);
 		const previewEl = this.ensureStrokeWidthPreviewEl();
-		const labelEl = previewEl.querySelector<HTMLElement>(".draw-in-canvas-stroke-width-preview-label");
 
 		previewEl.setCssProps({
 			"--draw-in-canvas-stroke-width-preview-size": `${Math.max(4, strokeWidth)}px`,
 			"--draw-in-canvas-stroke-width-preview-color": this.settings.strokeColor,
 		});
-
-		if (labelEl) {
-			labelEl.textContent = formatStrokeWidth(strokeWidth);
-		}
 
 		this.positionStrokeWidthPreview(state.x, state.y);
 	}
@@ -737,10 +734,7 @@ export class DrawingLayer {
 		const dotEl = document.createElement("span");
 		dotEl.classList.add("draw-in-canvas-stroke-width-preview-dot");
 
-		const labelEl = document.createElement("span");
-		labelEl.classList.add("draw-in-canvas-stroke-width-preview-label");
-
-		previewEl.append(dotEl, labelEl);
+		previewEl.append(dotEl);
 		document.body.appendChild(previewEl);
 		this.strokeWidthPreviewEl = previewEl;
 		return previewEl;
@@ -2560,7 +2554,7 @@ function colorsMatch(a: string, b: string): boolean {
 }
 
 function formatStrokeWidth(width: number): string {
-	return `${normalizeStrokeWidth(width)}px`;
+	return `${normalizeStrokeWidth(width)} px`;
 }
 
 function hasSelectionModifier(event: MouseEvent | PointerEvent): boolean {
