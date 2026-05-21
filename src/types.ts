@@ -10,6 +10,7 @@ export interface CanvasStroke {
 	id: string;
 	color: string;
 	width: number;
+	hardness: number;
 	points: StrokePoint[];
 	createdAt: number;
 }

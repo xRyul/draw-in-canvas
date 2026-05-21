@@ -5,10 +5,14 @@ import {
 	DrawInCanvasSettings,
 	FREEHAND_SLIDER_SETTINGS,
 	FreehandSliderSetting,
+	STROKE_HARDNESS_MAX,
+	STROKE_HARDNESS_MIN,
+	STROKE_HARDNESS_STEP,
 	STROKE_WIDTH_MAX,
 	STROKE_WIDTH_MIN,
 	STROKE_WIDTH_STEP,
 	normalizeFreehandSliderValue,
+	normalizeStrokeHardness,
 	normalizeStrokeWidth,
 } from "./settings";
 import {
@@ -137,6 +141,7 @@ export class DrawingLayer {
 	private readonly requestToggleDrawingMode: () => void;
 	private readonly requestSetStrokeColor: (color: string) => void;
 	private readonly requestSetStrokeWidth: (width: number) => void;
+	private readonly requestSetStrokeHardness: (hardness: number) => void;
 	private readonly requestSetFreehandSliderValue: (setting: FreehandSliderSetting, value: number) => void;
 	private readonly requestSetBeautifulStrokes: (enabled: boolean) => void;
 	private settings: DrawInCanvasSettings;
@@ -192,6 +197,7 @@ export class DrawingLayer {
 		requestToggleDrawingMode: () => void,
 		requestSetStrokeColor: (color: string) => void,
 		requestSetStrokeWidth: (width: number) => void,
+		requestSetStrokeHardness: (hardness: number) => void,
 		requestSetFreehandSliderValue: (setting: FreehandSliderSetting, value: number) => void,
 		requestSetBeautifulStrokes: (enabled: boolean) => void,
 	) {
@@ -201,6 +207,7 @@ export class DrawingLayer {
 		this.requestToggleDrawingMode = requestToggleDrawingMode;
 		this.requestSetStrokeColor = requestSetStrokeColor;
 		this.requestSetStrokeWidth = requestSetStrokeWidth;
+		this.requestSetStrokeHardness = requestSetStrokeHardness;
 		this.requestSetFreehandSliderValue = requestSetFreehandSliderValue;
 		this.requestSetBeautifulStrokes = requestSetBeautifulStrokes;
 	}
@@ -599,10 +606,17 @@ export class DrawingLayer {
 		handwritingControlsEl?.setAttribute("aria-disabled", (!this.settings.beautifulStrokes).toString());
 
 		this.syncPaletteSlider(
-			".draw-in-canvas-stroke-width-slider:not(.draw-in-canvas-freehand-slider)",
+			".draw-in-canvas-stroke-width-slider:not(.draw-in-canvas-freehand-slider):not(.draw-in-canvas-stroke-hardness-slider)",
 			".draw-in-canvas-stroke-width-value",
 			normalizeStrokeWidth(this.settings.strokeWidth),
 			formatStrokeWidth,
+		);
+
+		this.syncPaletteSlider(
+			".draw-in-canvas-stroke-hardness-slider",
+			".draw-in-canvas-stroke-hardness-value",
+			normalizeStrokeHardness(this.settings.strokeHardness),
+			formatStrokeHardness,
 		);
 
 		for (const setting of getFreehandSliderSettingKeys()) {
@@ -661,6 +675,7 @@ export class DrawingLayer {
 		strokeSectionEl.classList.add("draw-in-canvas-palette-section");
 		strokeSectionEl.appendChild(this.createPaletteSectionTitleEl("Stroke"));
 		strokeSectionEl.appendChild(this.createStrokeWidthSliderControlEl());
+		strokeSectionEl.appendChild(this.createStrokeHardnessSliderControlEl());
 		controlEl.appendChild(strokeSectionEl);
 		controlEl.appendChild(this.createHandwritingControlsEl());
 
@@ -692,6 +707,34 @@ export class DrawingLayer {
 			formatStrokeWidth(normalizeStrokeWidth(this.settings.strokeWidth)),
 			sliderEl,
 		);
+	}
+
+	private createStrokeHardnessSliderControlEl(): HTMLElement {
+		const inputId = createStrokeId();
+		const sliderEl = document.createElement("input");
+		sliderEl.id = inputId;
+		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-hardness-slider");
+		sliderEl.type = "range";
+		sliderEl.min = STROKE_HARDNESS_MIN.toString();
+		sliderEl.max = STROKE_HARDNESS_MAX.toString();
+		sliderEl.step = STROKE_HARDNESS_STEP.toString();
+		sliderEl.value = normalizeStrokeHardness(this.settings.strokeHardness).toString();
+		sliderEl.setAttribute("aria-label", "Stroke hardness");
+
+		this.colorPaletteDisposers.push(
+			this.addListener(sliderEl, "keydown", this.handleStrokeWidthSliderKeyDown),
+			this.addListener(sliderEl, "input", this.handleStrokeHardnessSliderInput),
+		);
+
+		const controlEl = createSliderControlEl(
+			inputId,
+			"Hardness",
+			"draw-in-canvas-stroke-width-value",
+			formatStrokeHardness(normalizeStrokeHardness(this.settings.strokeHardness)),
+			sliderEl,
+		);
+		controlEl.querySelector("output")?.classList.add("draw-in-canvas-stroke-hardness-value");
+		return controlEl;
 	}
 
 	private createHandwritingControlsEl(): HTMLElement {
@@ -798,6 +841,18 @@ export class DrawingLayer {
 
 		this.settings = {...this.settings, strokeWidth};
 		this.requestSetStrokeWidth(strokeWidth);
+		this.syncColorPaletteSelection();
+	}
+
+	private setStrokeHardness(hardness: number): void {
+		const strokeHardness = normalizeStrokeHardness(hardness);
+
+		if (strokeHardness === normalizeStrokeHardness(this.settings.strokeHardness)) {
+			return;
+		}
+
+		this.settings = {...this.settings, strokeHardness};
+		this.requestSetStrokeHardness(strokeHardness);
 		this.syncColorPaletteSelection();
 	}
 
@@ -1084,6 +1139,7 @@ export class DrawingLayer {
 	private updateVisibleStrokePathEl(pathEl: SVGPathElement, stroke: CanvasStroke, isComplete = true): void {
 		pathEl.classList.toggle("mod-handwritten", this.settings.beautifulStrokes);
 		pathEl.setAttribute("pointer-events", "none");
+		this.applyStrokeHardness(pathEl, stroke);
 
 		if (this.settings.beautifulStrokes) {
 			pathEl.setAttribute("d", this.getHandwrittenStrokeShapePath(stroke, isComplete));
@@ -1101,6 +1157,12 @@ export class DrawingLayer {
 		pathEl.setAttribute("fill", "none");
 		pathEl.setAttribute("stroke-linecap", "round");
 		pathEl.setAttribute("stroke-linejoin", "round");
+	}
+
+	private applyStrokeHardness(pathEl: SVGPathElement, stroke: CanvasStroke): void {
+		const blurRadius = getStrokeHardnessBlurRadius(stroke);
+		pathEl.classList.toggle("mod-soft-edge", blurRadius > 0);
+		pathEl.setCssStyles({filter: blurRadius > 0 ? `blur(${blurRadius}px)` : ""});
 	}
 
 
@@ -1168,6 +1230,7 @@ export class DrawingLayer {
 			id: createStrokeId(),
 			color: this.settings.strokeColor,
 			width: this.settings.strokeWidth,
+			hardness: this.settings.strokeHardness,
 			points: [point],
 			createdAt: Date.now(),
 		};
@@ -1375,6 +1438,16 @@ export class DrawingLayer {
 		const strokeWidth = Number(event.currentTarget.value);
 		this.setStrokeWidth(strokeWidth);
 		this.updateStrokeWidthPreview(strokeWidth);
+	};
+
+	private readonly handleStrokeHardnessSliderInput = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		this.setStrokeHardness(Number(event.currentTarget.value));
 	};
 
 	private readonly handleFreehandSliderInput = (event: Event): void => {
@@ -2706,6 +2779,20 @@ function colorsMatch(a: string, b: string): boolean {
 
 function formatStrokeWidth(width: number): string {
 	return `${normalizeStrokeWidth(width)} px`;
+}
+
+function formatStrokeHardness(hardness: number): string {
+	return `${normalizeStrokeHardness(hardness)}%`;
+}
+
+function getStrokeHardnessBlurRadius(stroke: CanvasStroke): number {
+	const softness = 1 - normalizeStrokeHardness(stroke.hardness) / 100;
+
+	if (softness <= 0) {
+		return 0;
+	}
+
+	return roundCoordinate(Math.max(0, stroke.width * softness * 0.35));
 }
 
 function hasSelectionModifier(event: MouseEvent | PointerEvent): boolean {

@@ -289,7 +289,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	pointer-events: stroke;
 }
 
-.draw-in-canvas-stroke-wrapper.is-selected .draw-in-canvas-stroke {
+.draw-in-canvas-stroke-wrapper.is-selected {
 	filter: drop-shadow(0 0 2px var(--interactive-accent));
 }
 
