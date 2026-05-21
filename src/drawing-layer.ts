@@ -52,8 +52,9 @@ const PRESET_STROKE_COLORS = [
 	{name: "Slate", value: "#64748b"},
 	{name: "Black", value: "#111827"},
 	{name: "White", value: "#ffffff"},
-	{name: "Accent", value: "var(--interactive-accent)"},
 ] as const;
+const DEFAULT_CUSTOM_COLOR = "#8b5cf6";
+const CUSTOM_COLOR_SHADE_COUNT = 6;
 const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-width-preview";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const COLOR_PALETTE_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
@@ -63,6 +64,12 @@ interface StrokeBounds {
 	minY: number;
 	maxX: number;
 	maxY: number;
+}
+
+interface RgbColor {
+	r: number;
+	g: number;
+	b: number;
 }
 
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
@@ -160,6 +167,8 @@ export class DrawingLayer {
 	private toolbarGroupEl: HTMLElement | null = null;
 	private toolbarButtonEl: HTMLElement | null = null;
 	private colorPaletteEl: HTMLElement | null = null;
+	private customColorHex = DEFAULT_CUSTOM_COLOR;
+	private shouldSelectCustomColorHexOnClick = false;
 	private toolbarPressState: ToolbarPressState | null = null;
 	private strokeWidthPreviewEl: HTMLElement | null = null;
 	private strokeWidthPreviewState: StrokeWidthPreviewState | null = null;
@@ -210,6 +219,7 @@ export class DrawingLayer {
 		this.app = app;
 		this.target = target;
 		this.settings = {...settings};
+		this.customColorHex = normalizeHexColor(settings.strokeColor) ?? DEFAULT_CUSTOM_COLOR;
 		this.requestToggleDrawingMode = requestToggleDrawingMode;
 		this.requestSetStrokeColor = requestSetStrokeColor;
 		this.requestSetStrokeWidth = requestSetStrokeWidth;
@@ -306,6 +316,7 @@ export class DrawingLayer {
 		const shouldRerenderStrokes = shouldRerenderForSettingsChange(this.settings, settings);
 
 		this.settings = {...settings};
+		this.updateCustomColorFromStrokeColor();
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
 
@@ -521,7 +532,7 @@ export class DrawingLayer {
 		for (const color of PRESET_STROKE_COLORS) {
 			const swatchEl = document.createElement("button");
 			swatchEl.type = "button";
-			swatchEl.classList.add("draw-in-canvas-color-swatch");
+			swatchEl.classList.add("draw-in-canvas-color-swatch", "draw-in-canvas-preset-color-swatch");
 			swatchEl.dataset.color = color.value;
 			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
 			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
@@ -541,6 +552,9 @@ export class DrawingLayer {
 			paletteEl.appendChild(swatchEl);
 			swatchEls.push(swatchEl);
 		}
+
+		paletteEl.appendChild(this.createNativeColorPickerEl());
+		paletteEl.appendChild(this.createCustomColorControlEl());
 
 		paletteEl.appendChild(this.createStrokeWidthControlEl());
 
@@ -594,13 +608,15 @@ export class DrawingLayer {
 	}
 
 	private syncColorPaletteSelection(): void {
-		const swatchEls = this.colorPaletteEl?.querySelectorAll<HTMLElement>(".draw-in-canvas-color-swatch") ?? [];
+		const swatchEls = this.colorPaletteEl?.querySelectorAll<HTMLElement>(".draw-in-canvas-preset-color-swatch") ?? [];
 
 		for (const swatchEl of Array.from(swatchEls)) {
 			const isSelected = colorsMatch(swatchEl.dataset.color ?? "", this.settings.strokeColor);
 			swatchEl.classList.toggle("is-selected", isSelected);
 			swatchEl.setAttribute("aria-pressed", isSelected.toString());
 		}
+
+		this.syncCustomColorControls();
 
 		const handwritingToggleEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-handwriting-toggle-input");
 		const handwritingControlsEl = this.colorPaletteEl?.querySelector<HTMLElement>(".draw-in-canvas-freehand-controls");
@@ -670,15 +686,156 @@ export class DrawingLayer {
 		}
 	}
 
+	private syncCustomColorControls(): void {
+		this.updateCustomColorFromStrokeColor();
+
+		const hexInputEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-custom-color-hex-input");
+		const colorPickerEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-native-color-picker");
+		const colorPickerSwatchEl = this.colorPaletteEl?.querySelector<HTMLElement>(".draw-in-canvas-color-picker-swatch");
+		const shadeEls = this.colorPaletteEl?.querySelectorAll<HTMLButtonElement>(".draw-in-canvas-custom-color-shade") ?? [];
+
+		if (hexInputEl && document.activeElement !== hexInputEl) {
+			hexInputEl.value = formatHexColor(this.customColorHex);
+			setHexInputValidity(hexInputEl, true);
+		}
+
+		if (colorPickerEl) {
+			colorPickerEl.value = this.customColorHex;
+		}
+
+		if (colorPickerSwatchEl) {
+			colorPickerSwatchEl.setCssProps({"--draw-in-canvas-swatch-color": this.customColorHex});
+			colorPickerSwatchEl.classList.toggle("is-selected", colorsMatch(this.customColorHex, this.settings.strokeColor));
+		}
+
+		const shades = getCustomColorShades(this.customColorHex);
+
+		for (const shadeEl of Array.from(shadeEls)) {
+			const shadeIndex = Number(shadeEl.dataset.shadeIndex);
+			const shade = shades[shadeIndex];
+
+			if (!shade) {
+				continue;
+			}
+
+			shadeEl.dataset.color = shade.value;
+			shadeEl.setAttribute("aria-label", `Use ${shade.name.toLowerCase()} ${formatHexColor(shade.value)} stroke color`);
+			shadeEl.setCssProps({"--draw-in-canvas-custom-shade-color": shade.value});
+			shadeEl.setCssStyles({backgroundColor: shade.value});
+			shadeEl.classList.toggle("is-selected", colorsMatch(shade.value, this.settings.strokeColor));
+			shadeEl.setAttribute("aria-pressed", colorsMatch(shade.value, this.settings.strokeColor).toString());
+		}
+	}
+
+	private updateCustomColorFromStrokeColor(): void {
+		const strokeColorHex = normalizeHexColor(this.settings.strokeColor);
+
+		if (strokeColorHex) {
+			this.customColorHex = strokeColorHex;
+		}
+	}
+
 	private setStrokeColor(color: string): void {
 		if (colorsMatch(color, this.settings.strokeColor)) {
 			return;
 		}
 
+		const hexColor = normalizeHexColor(color);
+
+		if (hexColor) {
+			this.customColorHex = hexColor;
+		}
 		this.settings = {...this.settings, strokeColor: color};
 		this.requestSetStrokeColor(color);
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
+	}
+
+	private createNativeColorPickerEl(): HTMLElement {
+		const pickerLabelEl = document.createElement("label");
+		pickerLabelEl.classList.add("draw-in-canvas-color-swatch", "draw-in-canvas-color-picker-swatch");
+		pickerLabelEl.setAttribute("title", "Choose custom color");
+		pickerLabelEl.setCssProps({"--draw-in-canvas-swatch-color": this.customColorHex});
+
+		const pickerInputEl = document.createElement("input");
+		pickerInputEl.classList.add("draw-in-canvas-native-color-picker");
+		pickerInputEl.type = "color";
+		pickerInputEl.value = this.customColorHex;
+		pickerInputEl.setAttribute("aria-label", "Choose custom stroke color");
+
+		const iconEl = document.createElement("span");
+		iconEl.classList.add("draw-in-canvas-color-picker-icon");
+		setIcon(iconEl, "palette");
+
+		const hiddenTextEl = document.createElement("span");
+		hiddenTextEl.classList.add("draw-in-canvas-visually-hidden");
+		hiddenTextEl.textContent = "Choose custom stroke color";
+
+		this.colorPaletteDisposers.push(
+			this.addListener(pickerInputEl, "input", this.handleNativeColorPickerInput),
+			this.addListener(pickerInputEl, "change", this.handleNativeColorPickerInput),
+		);
+
+		pickerLabelEl.append(pickerInputEl, iconEl, hiddenTextEl);
+		return pickerLabelEl;
+	}
+
+	private createCustomColorControlEl(): HTMLElement {
+		const controlEl = document.createElement("div");
+		controlEl.classList.add("draw-in-canvas-custom-color-control");
+
+		const fieldEl = document.createElement("div");
+		fieldEl.classList.add("draw-in-canvas-custom-color-field");
+
+		const inputId = createStrokeId();
+		const labelEl = document.createElement("label");
+		labelEl.htmlFor = inputId;
+		labelEl.textContent = "Hex color";
+
+		const inputEl = document.createElement("input");
+		inputEl.id = inputId;
+		inputEl.classList.add("draw-in-canvas-custom-color-hex-input");
+		inputEl.type = "text";
+		inputEl.inputMode = "text";
+		inputEl.maxLength = 7;
+		inputEl.pattern = "#?[0-9A-Fa-f]{6}";
+		inputEl.placeholder = "#123456";
+		inputEl.spellcheck = false;
+		inputEl.value = formatHexColor(this.customColorHex);
+		inputEl.setAttribute("aria-label", "Custom hex stroke color");
+
+		fieldEl.append(labelEl, inputEl);
+
+		const shadesEl = document.createElement("div");
+		shadesEl.classList.add("draw-in-canvas-custom-color-shades");
+		shadesEl.setAttribute("aria-label", "Custom color shades");
+
+		for (let index = 0; index < CUSTOM_COLOR_SHADE_COUNT; index++) {
+			const shadeEl = document.createElement("button");
+			shadeEl.type = "button";
+			shadeEl.classList.add("draw-in-canvas-custom-color-shade");
+			shadeEl.dataset.shadeIndex = index.toString();
+
+			this.colorPaletteDisposers.push(
+				this.addListener(shadeEl, "pointerdown", this.handleColorSwatchPointerDown),
+				this.addListener(shadeEl, "click", this.handleCustomColorShadeClick),
+			);
+
+			shadesEl.appendChild(shadeEl);
+		}
+
+		this.colorPaletteDisposers.push(
+			this.addListener(inputEl, "pointerdown", this.handleCustomColorHexPointerDown),
+			this.addListener(inputEl, "focus", this.handleCustomColorHexFocus),
+			this.addListener(inputEl, "click", this.handleCustomColorHexClick),
+			this.addListener(inputEl, "input", this.handleCustomColorHexInput),
+			this.addListener(inputEl, "change", this.handleCustomColorHexChange),
+			this.addListener(inputEl, "blur", this.handleCustomColorHexChange),
+			this.addListener(inputEl, "keydown", this.handleCustomColorHexKeyDown),
+		);
+
+		controlEl.append(fieldEl, shadesEl);
+		return controlEl;
 	}
 
 	private createStrokeWidthControlEl(): HTMLElement {
@@ -1465,6 +1622,126 @@ export class DrawingLayer {
 	private readonly handleColorSwatchPointerDown = (event: PointerEvent): void => {
 		event.preventDefault();
 		event.stopPropagation();
+	};
+
+	private readonly handleNativeColorPickerInput = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		const hexColor = normalizeHexColor(event.currentTarget.value);
+
+		if (!hexColor) {
+			return;
+		}
+
+		this.customColorHex = hexColor;
+		this.setStrokeColor(hexColor);
+	};
+
+	private readonly handleCustomColorHexPointerDown = (event: PointerEvent): void => {
+		event.stopPropagation();
+
+		if (event.currentTarget instanceof HTMLInputElement) {
+			this.shouldSelectCustomColorHexOnClick = document.activeElement !== event.currentTarget;
+		}
+	};
+
+	private readonly handleCustomColorHexClick = (event: MouseEvent): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		if (this.shouldSelectCustomColorHexOnClick) {
+			event.currentTarget.select();
+			this.shouldSelectCustomColorHexOnClick = false;
+		}
+	};
+
+	private readonly handleCustomColorHexFocus = (event: FocusEvent): void => {
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		const inputEl = event.currentTarget;
+
+		window.requestAnimationFrame(() => {
+			if (document.activeElement === inputEl) {
+				inputEl.select();
+			}
+		});
+	};
+
+	private readonly handleCustomColorHexInput = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		const hexColor = normalizeHexColor(event.currentTarget.value);
+		const isEmpty = event.currentTarget.value.trim().length === 0;
+		setHexInputValidity(event.currentTarget, Boolean(hexColor) || isEmpty);
+
+		if (!hexColor) {
+			return;
+		}
+
+		this.customColorHex = hexColor;
+		this.setStrokeColor(hexColor);
+	};
+
+	private readonly handleCustomColorHexChange = (event: Event): void => {
+		event.stopPropagation();
+		this.shouldSelectCustomColorHexOnClick = false;
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		const hexColor = normalizeHexColor(event.currentTarget.value);
+
+		if (hexColor) {
+			this.customColorHex = hexColor;
+			this.setStrokeColor(hexColor);
+		}
+
+		event.currentTarget.value = formatHexColor(this.customColorHex);
+		setHexInputValidity(event.currentTarget, true);
+	};
+
+	private readonly handleCustomColorHexKeyDown = (event: KeyboardEvent): void => {
+		event.stopPropagation();
+
+		if (event.key !== "Enter" || !(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		event.preventDefault();
+		event.currentTarget.blur();
+	};
+
+	private readonly handleCustomColorShadeClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		const color = event.currentTarget.dataset.color;
+
+		if (!color) {
+			return;
+		}
+
+		this.setStrokeColor(color);
+		this.closeColorPalette();
+		this.toolbarButtonEl?.focus({preventScroll: true});
 	};
 
 	private readonly handleStrokeWidthSliderPointerDown = (event: PointerEvent): void => {
@@ -2838,7 +3115,81 @@ function isActivationKey(event: KeyboardEvent): boolean {
 }
 
 function colorsMatch(a: string, b: string): boolean {
+	const aHex = normalizeHexColor(a);
+	const bHex = normalizeHexColor(b);
+
+	if (aHex && bHex) {
+		return aHex === bHex;
+	}
+
 	return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function normalizeHexColor(value: string): string | null {
+	const match = /^#?([\da-f]{6})$/i.exec(value.trim());
+	const hexValue = match?.[1];
+
+	if (!hexValue) {
+		return null;
+	}
+
+	return `#${hexValue.toLowerCase()}`;
+}
+
+function formatHexColor(value: string): string {
+	return (normalizeHexColor(value) ?? DEFAULT_CUSTOM_COLOR).toUpperCase();
+}
+
+function setHexInputValidity(inputEl: HTMLInputElement, isValid: boolean): void {
+	inputEl.classList.toggle("is-invalid", !isValid);
+	inputEl.setAttribute("aria-invalid", (!isValid).toString());
+}
+
+function getCustomColorShades(hexColor: string): Array<{name: string; value: string}> {
+	const baseColor = hexToRgb(hexColor) ?? hexToRgb(DEFAULT_CUSTOM_COLOR);
+
+	if (!baseColor) {
+		return [];
+	}
+
+	return [
+		{name: "Lightest shade", value: rgbToHex(mixRgb(baseColor, {r: 255, g: 255, b: 255}, 0.72))},
+		{name: "Light shade", value: rgbToHex(mixRgb(baseColor, {r: 255, g: 255, b: 255}, 0.48))},
+		{name: "Soft shade", value: rgbToHex(mixRgb(baseColor, {r: 255, g: 255, b: 255}, 0.24))},
+		{name: "Base shade", value: rgbToHex(baseColor)},
+		{name: "Deep shade", value: rgbToHex(mixRgb(baseColor, {r: 0, g: 0, b: 0}, 0.18))},
+		{name: "Darkest shade", value: rgbToHex(mixRgb(baseColor, {r: 0, g: 0, b: 0}, 0.36))},
+	];
+}
+
+function hexToRgb(hexColor: string): RgbColor | null {
+	const hexValue = normalizeHexColor(hexColor)?.slice(1);
+
+	if (!hexValue) {
+		return null;
+	}
+
+	return {
+		r: Number.parseInt(hexValue.slice(0, 2), 16),
+		g: Number.parseInt(hexValue.slice(2, 4), 16),
+		b: Number.parseInt(hexValue.slice(4, 6), 16),
+	};
+}
+
+function mixRgb(from: RgbColor, to: RgbColor, amount: number): RgbColor {
+	return {
+		r: Math.round(from.r + (to.r - from.r) * amount),
+		g: Math.round(from.g + (to.g - from.g) * amount),
+		b: Math.round(from.b + (to.b - from.b) * amount),
+	};
+}
+
+function rgbToHex(color: RgbColor): string {
+	return `#${[color.r, color.g, color.b].map((value) => clampRgb(value).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function clampRgb(value: number): number {
+	return Math.min(255, Math.max(0, Math.round(value)));
 }
 
 function formatStrokeWidth(width: number): string {
