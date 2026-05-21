@@ -53,8 +53,9 @@ pnpm dev
 7. Leave drawing mode, then select and drag an existing stroke to move it.
 8. Drag on an empty canvas area to use Obsidian's native marquee selection; it selects native canvas cards and Draw in Canvas strokes together.
 9. Drag from inside the selected bounding box to move the whole selected group, even when the pointer is not directly on a stroke line.
-10. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
-11. Use the canvas **Undo** / **Redo** buttons for Draw in Canvas actions from the current session, or use **Clear drawings from active canvas** as needed.
+10. Drag a corner handle on the selected bounding box to resize selected strokes larger or smaller.
+11. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
+12. Use the canvas **Undo** / **Redo** buttons for Draw in Canvas actions from the current session, or use **Clear drawings from active canvas** as needed.
 
 ## Notes
 

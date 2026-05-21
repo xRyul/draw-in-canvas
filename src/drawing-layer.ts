@@ -16,6 +16,10 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const MIN_POINT_DISTANCE = 1;
 const DRAG_MOVE_THRESHOLD = 1;
 const HIT_TARGET_PADDING = 10;
+const RESIZE_HANDLE_SIZE = 10;
+const RESIZE_HANDLE_HIT_PADDING = 6;
+const MIN_RESIZE_SCALE = 0.05;
+const RESIZE_SCALE_EPSILON = 0.001;
 const SAVE_DEBOUNCE_MS = 300;
 const TOOLBAR_LONG_PRESS_MS = 450;
 const HANDWRITTEN_EDGE_FOLLOW = 0.5;
@@ -46,18 +50,33 @@ interface StrokeBounds {
 	maxY: number;
 }
 
+type ResizeHandle = "nw" | "ne" | "se" | "sw";
+
 type DrawingHistoryAction =
 	| {type: "add-stroke"; stroke: CanvasStroke}
 	| {type: "clear-strokes"; strokes: CanvasStroke[]}
 	| {type: "delete-strokes"; strokes: CanvasStroke[]; indices: number[]}
 	| {type: "move-stroke"; strokeId: string; delta: StrokePoint}
-	| {type: "move-strokes"; strokeIds: string[]; delta: StrokePoint};
+	| {type: "move-strokes"; strokeIds: string[]; delta: StrokePoint}
+	| {type: "resize-strokes"; strokeIds: string[]; origin: StrokePoint; scale: number};
 
 interface StrokeDragState {
 	pointerId: number;
 	strokeIds: string[];
 	startPoint: StrokePoint;
 	currentDelta: StrokePoint;
+	strokeGroupEls: SVGGElement[];
+	hasMoved: boolean;
+}
+
+interface StrokeResizeState {
+	pointerId: number;
+	strokeIds: string[];
+	handle: ResizeHandle;
+	origin: StrokePoint;
+	referencePoint: StrokePoint;
+	referenceDistance: number;
+	currentScale: number;
 	strokeGroupEls: SVGGElement[];
 	hasMoved: boolean;
 }
@@ -133,7 +152,9 @@ export class DrawingLayer {
 	private activeStrokePreviewFrameId: number | null = null;
 	private readonly selectedStrokeIds = new Set<string>();
 	private selectionBoxEl: SVGRectElement | null = null;
+	private readonly selectionHandleEls: SVGRectElement[] = [];
 	private dragState: StrokeDragState | null = null;
+	private resizeState: StrokeResizeState | null = null;
 	private nativeSelectionDragState: NativeSelectionDragState | null = null;
 	private mutationObserver: MutationObserver | null = null;
 	private domSyncFrameId: number | null = null;
@@ -144,6 +165,7 @@ export class DrawingLayer {
 	private suppressNextNativeUndoClick = false;
 	private suppressNextNativeRedoClick = false;
 	private isSpaceKeyPressed = false;
+	private interactionCursor: string | null = null;
 	private readonly captureDisposers: Array<() => void> = [];
 	private readonly toolbarDisposers: Array<() => void> = [];
 	private readonly colorPaletteDisposers: Array<() => void> = [];
@@ -199,9 +221,13 @@ export class DrawingLayer {
 		}
 
 		this.clearNativeSelectionDrag();
+		if (this.resizeState) {
+			this.clearStrokeResizeTransform(this.resizeState);
+			this.resizeState = null;
+		}
 		this.svgEl?.remove();
 		this.svgEl = null;
-		this.selectionBoxEl = null;
+		this.removeSelectionOverlay();
 		this.strokeGroupById.clear();
 
 		if (this.saveTimeoutId !== null) {
@@ -222,6 +248,7 @@ export class DrawingLayer {
 		}
 
 		this.dragState = null;
+		this.resizeState = null;
 		this.clearNativeSelectionDrag();
 		this.selectStrokes([]);
 		this.mountRenderLayer();
@@ -797,6 +824,7 @@ export class DrawingLayer {
 			this.addListener(strokeInteractionEl, "pointermove", this.handleStrokePointerMove, true),
 			this.addListener(strokeInteractionEl, "pointerup", this.handleStrokePointerUp, true),
 			this.addListener(strokeInteractionEl, "pointercancel", this.handleStrokePointerUp, true),
+			this.addListener(strokeInteractionEl, "pointerleave", this.handleStrokePointerLeave, true),
 			this.addListener(document, "keydown", this.handleDocumentKeyDown, true),
 			this.addListener(document, "keyup", this.handleDocumentKeyUp, true),
 			this.addListener(window, "blur", this.handleWindowBlur),
@@ -804,6 +832,7 @@ export class DrawingLayer {
 	}
 
 	private removeStrokeInteractionListeners(): void {
+		this.setInteractionCursor(null);
 		for (const dispose of this.strokeInteractionDisposers.splice(0)) {
 			dispose();
 		}
@@ -841,6 +870,7 @@ export class DrawingLayer {
 		this.svgEl.replaceChildren();
 		this.strokeGroupById.clear();
 		this.selectionBoxEl = null;
+		this.selectionHandleEls.length = 0;
 
 		for (const stroke of this.drawingData.strokes) {
 			this.svgEl.appendChild(this.createStrokeGroupEl(stroke));
@@ -1208,6 +1238,14 @@ export class DrawingLayer {
 			return;
 		}
 
+		const resizeHandle = this.findResizeHandleAtPoint(point);
+
+		if (resizeHandle && this.startStrokeResize(event.pointerId, resizeHandle)) {
+			event.preventDefault();
+			event.stopPropagation();
+			return;
+		}
+
 		const stroke = this.findStrokeAtPoint(point);
 
 		if (stroke) {
@@ -1238,6 +1276,11 @@ export class DrawingLayer {
 	};
 
 	private readonly handleStrokePointerMove = (event: PointerEvent): void => {
+		if (this.resizeState && event.pointerId === this.resizeState.pointerId) {
+			this.handleStrokeResizePointerMove(event, this.resizeState);
+			return;
+		}
+
 		if (this.dragState && event.pointerId === this.dragState.pointerId) {
 			this.handleStrokeDragPointerMove(event, this.dragState);
 			return;
@@ -1245,10 +1288,18 @@ export class DrawingLayer {
 
 		if (this.nativeSelectionDragState && event.pointerId === this.nativeSelectionDragState.pointerId) {
 			this.handleNativeSelectionDragPointerMove(event, this.nativeSelectionDragState);
+			return;
 		}
+
+		this.updateInteractionCursorFromEvent(event);
 	};
 
 	private readonly handleStrokePointerUp = (event: PointerEvent): void => {
+		if (this.resizeState && event.pointerId === this.resizeState.pointerId) {
+			this.handleStrokeResizePointerUp(event, this.resizeState);
+			return;
+		}
+
 		if (this.dragState && event.pointerId === this.dragState.pointerId) {
 			this.handleStrokeDragPointerUp(event, this.dragState);
 			return;
@@ -1258,6 +1309,41 @@ export class DrawingLayer {
 			this.handleNativeSelectionDragPointerUp(event, this.nativeSelectionDragState);
 		}
 	};
+
+	private updateInteractionCursorFromEvent(event: PointerEvent): void {
+		if (this.captureEl || this.isSpaceKeyPressed || isNativeCanvasContentTarget(event.target)) {
+			this.setInteractionCursor(null);
+			return;
+		}
+
+		const point = this.clientPointToCanvasPoint(event);
+
+		if (!point) {
+			this.setInteractionCursor(null);
+			return;
+		}
+
+		const resizeHandle = this.findResizeHandleAtPoint(point);
+		this.setInteractionCursor(resizeHandle ? getResizeHandleCursor(resizeHandle) : null);
+	}
+
+	private setInteractionCursor(cursor: string | null): void {
+		if (this.interactionCursor === cursor) {
+			return;
+		}
+
+		this.interactionCursor = cursor;
+		this.strokeInteractionEl?.setCssStyles({cursor: cursor ?? ""});
+	}
+
+	private readonly handleStrokePointerLeave = (): void => {
+		if (this.resizeState || this.dragState || this.nativeSelectionDragState) {
+			return;
+		}
+
+		this.setInteractionCursor(null);
+	};
+
 	private handleStrokeHitPointerDown(event: PointerEvent, point: StrokePoint, stroke: CanvasStroke): void {
 		event.preventDefault();
 		event.stopPropagation();
@@ -1370,6 +1456,111 @@ export class DrawingLayer {
 		});
 		this.hasPendingSave = true;
 		this.scheduleSave();
+	}
+
+	private startStrokeResize(pointerId: number, handle: ResizeHandle): boolean {
+		const selection = this.getSelectedStrokeBounds();
+		const strokeIds = this.getSelectedStrokeIds();
+		const strokeGroupEls = strokeIds.map((strokeId) => this.findStrokeGroupEl(strokeId)).filter(isPresent);
+
+		if (!selection || strokeGroupEls.length === 0) {
+			return false;
+		}
+
+		const outerBounds = expandBounds(selection.bounds, selection.padding);
+		const origin = getResizeHandlePoint(outerBounds, getOppositeResizeHandle(handle));
+		const referencePoint = getResizeHandlePoint(outerBounds, handle);
+		const referenceDistance = Math.max(distanceBetween(origin, referencePoint), 1);
+
+		this.clearNativeSelectionDrag();
+		this.dragState = null;
+		this.resizeState = {
+			pointerId,
+			strokeIds,
+			handle,
+			origin,
+			referencePoint,
+			referenceDistance,
+			currentScale: 1,
+			strokeGroupEls,
+			hasMoved: false,
+		};
+
+		this.setInteractionCursor(getResizeHandleCursor(handle));
+		if (this.strokeInteractionEl) {
+			trySetPointerCapture(this.strokeInteractionEl, pointerId);
+		}
+
+		return true;
+	}
+
+	private handleStrokeResizePointerMove(event: PointerEvent, resizeState: StrokeResizeState): void {
+		const point = this.clientPointToCanvasPoint(event);
+
+		if (!point) {
+			return;
+		}
+
+		const scale = Math.max(MIN_RESIZE_SCALE, distanceBetween(resizeState.origin, point) / resizeState.referenceDistance);
+
+		if (!resizeState.hasMoved && Math.abs(scale - 1) < RESIZE_SCALE_EPSILON) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.setInteractionCursor(getResizeHandleCursor(resizeState.handle));
+		resizeState.hasMoved = true;
+		resizeState.currentScale = scale;
+		this.applyStrokeResizeTransform(resizeState, scale);
+	}
+
+	private handleStrokeResizePointerUp(event: PointerEvent, resizeState: StrokeResizeState): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (this.strokeInteractionEl?.hasPointerCapture(event.pointerId)) {
+			this.strokeInteractionEl.releasePointerCapture(event.pointerId);
+		}
+
+		this.resizeState = null;
+		this.clearStrokeResizeTransform(resizeState);
+		this.updateInteractionCursorFromEvent(event);
+
+		if (!resizeState.hasMoved || Math.abs(resizeState.currentScale - 1) < RESIZE_SCALE_EPSILON) {
+			this.renderSelectionBox();
+			return;
+		}
+
+		const resizedStrokeIds: string[] = [];
+
+		for (const strokeId of resizeState.strokeIds) {
+			const stroke = this.findStroke(strokeId);
+
+			if (!stroke) {
+				continue;
+			}
+
+			this.scaleStroke(stroke, resizeState.origin, resizeState.currentScale);
+			this.updateStrokeElement(stroke);
+			resizedStrokeIds.push(strokeId);
+		}
+
+		if (resizedStrokeIds.length === 0) {
+			this.renderSelectionBox();
+			return;
+		}
+
+		this.selectStrokes(resizedStrokeIds);
+		this.pushHistory({
+			type: "resize-strokes",
+			strokeIds: resizedStrokeIds,
+			origin: resizeState.origin,
+			scale: resizeState.currentScale,
+		});
+		this.hasPendingSave = true;
+		this.scheduleSave();
+		this.updateInteractionCursorFromEvent(event);
 	}
 
 	private startNativeSelectionDrag(event: PointerEvent, point: StrokePoint): void {
@@ -1609,8 +1800,7 @@ export class DrawingLayer {
 	}
 
 	private renderSelectionBox(): void {
-		this.selectionBoxEl?.remove();
-		this.selectionBoxEl = null;
+		this.removeSelectionOverlay();
 
 		const selection = this.getSelectedStrokeBounds();
 
@@ -1618,18 +1808,72 @@ export class DrawingLayer {
 			return;
 		}
 
-		const {bounds: selectionBounds, padding} = selection;
+		const outerBounds = expandBounds(selection.bounds, selection.padding);
 
 		const rectEl = document.createElementNS(SVG_NS, "rect");
 		rectEl.classList.add("draw-in-canvas-selection-box");
-		rectEl.setAttribute("x", roundCoordinate(selectionBounds.minX - padding).toString());
-		rectEl.setAttribute("y", roundCoordinate(selectionBounds.minY - padding).toString());
-		rectEl.setAttribute("width", roundCoordinate(selectionBounds.maxX - selectionBounds.minX + padding * 2).toString());
-		rectEl.setAttribute("height", roundCoordinate(selectionBounds.maxY - selectionBounds.minY + padding * 2).toString());
+		rectEl.setAttribute("x", roundCoordinate(outerBounds.minX).toString());
+		rectEl.setAttribute("y", roundCoordinate(outerBounds.minY).toString());
+		rectEl.setAttribute("width", roundCoordinate(outerBounds.maxX - outerBounds.minX).toString());
+		rectEl.setAttribute("height", roundCoordinate(outerBounds.maxY - outerBounds.minY).toString());
 		rectEl.setAttribute("rx", "4");
 		rectEl.setAttribute("pointer-events", "none");
 		this.svgEl.appendChild(rectEl);
 		this.selectionBoxEl = rectEl;
+
+		for (const handle of ["nw", "ne", "se", "sw"] as const) {
+			const handleEl = this.createSelectionHandleEl(handle, outerBounds);
+			this.svgEl.appendChild(handleEl);
+			this.selectionHandleEls.push(handleEl);
+		}
+	}
+
+	private removeSelectionOverlay(): void {
+		this.selectionBoxEl?.remove();
+		this.selectionBoxEl = null;
+
+		for (const handleEl of this.selectionHandleEls.splice(0)) {
+			handleEl.remove();
+		}
+	}
+
+	private createSelectionHandleEl(handle: ResizeHandle, bounds: StrokeBounds): SVGRectElement {
+		const point = getResizeHandlePoint(bounds, handle);
+		const handleEl = document.createElementNS(SVG_NS, "rect");
+		handleEl.classList.add("draw-in-canvas-selection-handle", `mod-${handle}`);
+		handleEl.dataset.resizeHandle = handle;
+		handleEl.setAttribute("x", roundCoordinate(point.x - RESIZE_HANDLE_SIZE / 2).toString());
+		handleEl.setAttribute("y", roundCoordinate(point.y - RESIZE_HANDLE_SIZE / 2).toString());
+		handleEl.setAttribute("width", RESIZE_HANDLE_SIZE.toString());
+		handleEl.setAttribute("height", RESIZE_HANDLE_SIZE.toString());
+		handleEl.setAttribute("rx", "2");
+		handleEl.setAttribute("pointer-events", "none");
+		return handleEl;
+	}
+
+	private findResizeHandleAtPoint(point: StrokePoint): ResizeHandle | null {
+		const selection = this.getSelectedStrokeBounds();
+
+		if (!selection) {
+			return null;
+		}
+
+		const bounds = expandBounds(selection.bounds, selection.padding);
+		const hitRadius = RESIZE_HANDLE_SIZE / 2 + RESIZE_HANDLE_HIT_PADDING;
+
+		let closestHandle: ResizeHandle | null = null;
+		let closestDistance = Number.POSITIVE_INFINITY;
+
+		for (const handle of ["nw", "ne", "se", "sw"] as const) {
+			const distance = distanceBetween(point, getResizeHandlePoint(bounds, handle));
+
+			if (distance <= hitRadius && distance < closestDistance) {
+				closestHandle = handle;
+				closestDistance = distance;
+			}
+		}
+
+		return closestHandle;
 	}
 
 	private getSelectedStrokeBounds(): SelectionBounds | null {
@@ -1771,6 +2015,26 @@ export class DrawingLayer {
 				break;
 			}
 
+			case "resize-strokes": {
+				const scale = direction === "undo" ? 1 / action.scale : action.scale;
+				const resizedStrokeIds: string[] = [];
+
+				for (const strokeId of action.strokeIds) {
+					const stroke = this.findStroke(strokeId);
+
+					if (!stroke) {
+						continue;
+					}
+
+					this.scaleStroke(stroke, action.origin, scale);
+					this.updateStrokeElement(stroke);
+					resizedStrokeIds.push(strokeId);
+				}
+
+				this.selectStrokes(resizedStrokeIds);
+				break;
+			}
+
 			default:
 				assertNever(action);
 		}
@@ -1908,6 +2172,19 @@ export class DrawingLayer {
 		}
 	}
 
+	private scaleStroke(stroke: CanvasStroke, origin: StrokePoint, scale: number): void {
+		scalePointsInPlace(stroke.points, origin, scale);
+		stroke.width = Math.max(0.01, roundCoordinate(stroke.width * scale));
+
+		const bounds = this.strokeBoundsById.get(stroke.id);
+
+		if (bounds) {
+			this.strokeBoundsById.set(stroke.id, scaleBounds(bounds, origin, scale));
+		} else {
+			this.setStrokeBounds(stroke);
+		}
+	}
+
 	private applyStrokeDragTransform(dragState: StrokeDragState, delta: StrokePoint): void {
 		const transform = translateToTransform(delta);
 		for (const strokeGroupEl of dragState.strokeGroupEls) {
@@ -1915,6 +2192,9 @@ export class DrawingLayer {
 		}
 
 		this.selectionBoxEl?.setAttribute("transform", transform);
+		for (const handleEl of this.selectionHandleEls) {
+			handleEl.setAttribute("transform", transform);
+		}
 	}
 
 	private clearStrokeDragTransform(dragState: StrokeDragState): void {
@@ -1923,6 +2203,35 @@ export class DrawingLayer {
 		}
 
 		this.selectionBoxEl?.removeAttribute("transform");
+		for (const handleEl of this.selectionHandleEls) {
+			handleEl.removeAttribute("transform");
+		}
+	}
+
+	private applyStrokeResizeTransform(resizeState: StrokeResizeState, scale: number): void {
+		const transform = scaleToTransform(resizeState.origin, scale);
+
+		for (const strokeGroupEl of resizeState.strokeGroupEls) {
+			strokeGroupEl.setAttribute("transform", transform);
+		}
+
+		this.selectionBoxEl?.setAttribute("transform", transform);
+
+		for (const handleEl of this.selectionHandleEls) {
+			handleEl.setAttribute("transform", transform);
+		}
+	}
+
+	private clearStrokeResizeTransform(resizeState: StrokeResizeState): void {
+		for (const strokeGroupEl of resizeState.strokeGroupEls) {
+			strokeGroupEl.removeAttribute("transform");
+		}
+
+		this.selectionBoxEl?.removeAttribute("transform");
+
+		for (const handleEl of this.selectionHandleEls) {
+			handleEl.removeAttribute("transform");
+		}
 	}
 
 	private clientPointToCanvasPoint(event: PointerEvent): StrokePoint | null {
@@ -2399,10 +2708,79 @@ function isPointNearBounds(point: StrokePoint, bounds: StrokeBounds, padding: nu
 		&& point.y <= bounds.maxY + padding;
 }
 
+function expandBounds(bounds: StrokeBounds, padding: number): StrokeBounds {
+	return {
+		minX: bounds.minX - padding,
+		minY: bounds.minY - padding,
+		maxX: bounds.maxX + padding,
+		maxY: bounds.maxY + padding,
+	};
+}
+
+function getResizeHandlePoint(bounds: StrokeBounds, handle: ResizeHandle): StrokePoint {
+	switch (handle) {
+		case "nw":
+			return {x: bounds.minX, y: bounds.minY};
+
+		case "ne":
+			return {x: bounds.maxX, y: bounds.minY};
+
+		case "se":
+			return {x: bounds.maxX, y: bounds.maxY};
+
+		case "sw":
+			return {x: bounds.minX, y: bounds.maxY};
+
+		default:
+			return assertNever(handle);
+	}
+}
+
+function getOppositeResizeHandle(handle: ResizeHandle): ResizeHandle {
+	switch (handle) {
+		case "nw":
+			return "se";
+
+		case "ne":
+			return "sw";
+
+		case "se":
+			return "nw";
+
+		case "sw":
+			return "ne";
+
+		default:
+			return assertNever(handle);
+	}
+}
+
+function getResizeHandleCursor(handle: ResizeHandle): string {
+	switch (handle) {
+		case "nw":
+		case "se":
+			return "nwse-resize";
+
+		case "ne":
+		case "sw":
+			return "nesw-resize";
+
+		default:
+			return assertNever(handle);
+	}
+}
+
 function translatePointsInPlace(points: StrokePoint[], delta: StrokePoint): void {
 	for (const point of points) {
 		point.x = roundCoordinate(point.x + delta.x);
 		point.y = roundCoordinate(point.y + delta.y);
+	}
+}
+
+function scalePointsInPlace(points: StrokePoint[], origin: StrokePoint, scale: number): void {
+	for (const point of points) {
+		point.x = roundCoordinate(origin.x + (point.x - origin.x) * scale);
+		point.y = roundCoordinate(origin.y + (point.y - origin.y) * scale);
 	}
 }
 
@@ -2415,12 +2793,42 @@ function translateBounds(bounds: StrokeBounds, delta: StrokePoint): StrokeBounds
 	};
 }
 
+function scaleBounds(bounds: StrokeBounds, origin: StrokePoint, scale: number): StrokeBounds {
+	const topLeft = scalePoint({x: bounds.minX, y: bounds.minY}, origin, scale);
+	const topRight = scalePoint({x: bounds.maxX, y: bounds.minY}, origin, scale);
+	const bottomRight = scalePoint({x: bounds.maxX, y: bounds.maxY}, origin, scale);
+	const bottomLeft = scalePoint({x: bounds.minX, y: bounds.maxY}, origin, scale);
+
+	return {
+		minX: Math.min(topLeft.x, topRight.x, bottomRight.x, bottomLeft.x),
+		minY: Math.min(topLeft.y, topRight.y, bottomRight.y, bottomLeft.y),
+		maxX: Math.max(topLeft.x, topRight.x, bottomRight.x, bottomLeft.x),
+		maxY: Math.max(topLeft.y, topRight.y, bottomRight.y, bottomLeft.y),
+	};
+}
+
+function scalePoint(point: StrokePoint, origin: StrokePoint, scale: number): StrokePoint {
+	return {
+		x: roundCoordinate(origin.x + (point.x - origin.x) * scale),
+		y: roundCoordinate(origin.y + (point.y - origin.y) * scale),
+	};
+}
+
 function negatePoint(point: StrokePoint): StrokePoint {
 	return {x: -point.x, y: -point.y};
 }
 
 function translateToTransform(delta: StrokePoint): string {
 	return `translate(${delta.x} ${delta.y})`;
+}
+
+function scaleToTransform(origin: StrokePoint, scale: number): string {
+	const formattedScale = formatScale(scale);
+	return `translate(${origin.x} ${origin.y}) scale(${formattedScale}) translate(${-origin.x} ${-origin.y})`;
+}
+
+function formatScale(value: number): string {
+	return Number(value.toFixed(4)).toString();
 }
 
 function clonePoint(point: StrokePoint): StrokePoint {
@@ -2469,6 +2877,14 @@ function cloneHistoryAction(action: DrawingHistoryAction): DrawingHistoryAction 
 				type: "move-strokes",
 				strokeIds: [...action.strokeIds],
 				delta: clonePoint(action.delta),
+			};
+
+		case "resize-strokes":
+			return {
+				type: "resize-strokes",
+				strokeIds: [...action.strokeIds],
+				origin: clonePoint(action.origin),
+				scale: action.scale,
 			};
 
 		default:
