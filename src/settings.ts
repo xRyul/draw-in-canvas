@@ -9,11 +9,13 @@ export const DEFAULT_STROKE_WIDTH = 4;
 export interface DrawInCanvasSettings {
 	strokeColor: string;
 	strokeWidth: number;
+	beautifulStrokes: boolean;
 }
 
 export const DEFAULT_SETTINGS: DrawInCanvasSettings = {
 	strokeColor: "#ff5a5f",
 	strokeWidth: DEFAULT_STROKE_WIDTH,
+	beautifulStrokes: false,
 };
 
 export function normalizeStrokeWidth(value: unknown): number {
@@ -65,6 +67,15 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 				.setDynamicTooltip()
 				.onChange((value) => {
 					this.plugin.setStrokeWidth(value);
+				}));
+
+		new Setting(containerEl)
+			.setName("Handwritten strokes")
+			.setDesc("Smooth strokes with subtle tapered starts and ends for a more natural hand-drawn look.")
+			.addToggle((toggle) => toggle
+				.setValue(this.plugin.settings.beautifulStrokes)
+				.onChange((value) => {
+					this.plugin.setBeautifulStrokes(value);
 				}));
 
 		const noteEl = document.createElement("p");

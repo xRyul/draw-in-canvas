@@ -40,7 +40,11 @@ export function roundCoordinate(value: number): number {
 	return Math.round(value * 100) / 100;
 }
 
-export function pointsToSvgPath(points: readonly StrokePoint[]): string {
+export function pointsToSvgPath(points: readonly StrokePoint[], options: {smooth?: boolean} = {}): string {
+	return options.smooth ? pointsToSmoothSvgPath(points) : pointsToLinearSvgPath(points);
+}
+
+function pointsToLinearSvgPath(points: readonly StrokePoint[]): string {
 	const firstPoint = points[0];
 
 	if (!firstPoint) {
@@ -60,6 +64,42 @@ export function pointsToSvgPath(points: readonly StrokePoint[]): string {
 		if (point) {
 			commands.push(`L ${formatCoordinate(point.x)} ${formatCoordinate(point.y)}`);
 		}
+	}
+
+	return commands.join(" ");
+}
+
+function pointsToSmoothSvgPath(points: readonly StrokePoint[]): string {
+	const firstPoint = points[0];
+
+	if (!firstPoint || points.length < 3) {
+		return pointsToLinearSvgPath(points);
+	}
+
+	const commands = [`M ${formatCoordinate(firstPoint.x)} ${formatCoordinate(firstPoint.y)}`];
+
+	for (let index = 1; index < points.length - 1; index++) {
+		const controlPoint = points[index];
+		const nextPoint = points[index + 1];
+
+		if (!controlPoint || !nextPoint) {
+			continue;
+		}
+
+		const endPoint = {
+			x: (controlPoint.x + nextPoint.x) / 2,
+			y: (controlPoint.y + nextPoint.y) / 2,
+		};
+
+		commands.push(
+			`Q ${formatCoordinate(controlPoint.x)} ${formatCoordinate(controlPoint.y)} ${formatCoordinate(endPoint.x)} ${formatCoordinate(endPoint.y)}`,
+		);
+	}
+
+	const lastPoint = points[points.length - 1];
+
+	if (lastPoint) {
+		commands.push(`L ${formatCoordinate(lastPoint.x)} ${formatCoordinate(lastPoint.y)}`);
 	}
 
 	return commands.join(" ");

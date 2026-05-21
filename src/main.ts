@@ -103,6 +103,10 @@ export default class DrawInCanvasPlugin extends Plugin {
 	}
 
 	refreshActiveLayerSettings(): void {
+		for (const layer of this.layers) {
+			layer.setSettings(this.settings);
+		}
+
 		this.activeLayer?.setSettings(this.settings);
 	}
 
@@ -129,9 +133,16 @@ export default class DrawInCanvasPlugin extends Plugin {
 		void this.saveSettings();
 	}
 
+	setBeautifulStrokes(enabled: boolean): void {
+		this.settings.beautifulStrokes = enabled;
+		this.refreshActiveLayerSettings();
+		void this.saveSettings();
+	}
+
 	async loadSettings(): Promise<void> {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<DrawInCanvasSettings>);
 		this.settings.strokeWidth = normalizeStrokeWidth(this.settings.strokeWidth);
+		this.settings.beautifulStrokes = this.settings.beautifulStrokes === true;
 	}
 
 	async saveSettings(): Promise<void> {

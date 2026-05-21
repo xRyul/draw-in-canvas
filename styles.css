@@ -171,9 +171,13 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .draw-in-canvas-stroke {
-	fill: none;
 	pointer-events: none;
 }
+
+.draw-in-canvas-stroke.mod-handwritten {
+	fill-opacity: 0.96;
+}
+
 
 .draw-in-canvas-stroke-hit {
 	fill: none;

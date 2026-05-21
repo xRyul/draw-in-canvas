@@ -48,12 +48,13 @@ pnpm dev
 2. Existing Draw in Canvas strokes are shown automatically.
 3. Use the pencil button in the right canvas controls, between **Canvas settings** and **Zoom in**, or run **Draw in Canvas: Toggle drawing mode on active canvas**.
 4. Long-press or right-click the pencil button, or focus it and press `ArrowDown`, to choose a predefined stroke color and adjust stroke size with the slider. A live cursor preview shows the selected size while you drag the slider.
-5. Drag anywhere on the canvas to draw. Press `Esc`, select the pencil button, or run the toggle command again to stop drawing.
-6. Leave drawing mode, then select and drag an existing stroke to move it.
-7. Drag on an empty canvas area to use Obsidian's native marquee selection; it selects native canvas cards and Draw in Canvas strokes together.
-8. Drag from inside the selected bounding box to move the whole selected group, even when the pointer is not directly on a stroke line.
-9. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
-10. Use the canvas **Undo** / **Redo** buttons for Draw in Canvas actions from the current session, or use **Clear drawings from active canvas** as needed.
+5. Enable **Handwritten strokes** in the plugin settings to smooth lines and use tapered, less perfectly round starts and ends.
+6. Drag anywhere on the canvas to draw. Press `Esc`, select the pencil button, or run the toggle command again to stop drawing.
+7. Leave drawing mode, then select and drag an existing stroke to move it.
+8. Drag on an empty canvas area to use Obsidian's native marquee selection; it selects native canvas cards and Draw in Canvas strokes together.
+9. Drag from inside the selected bounding box to move the whole selected group, even when the pointer is not directly on a stroke line.
+10. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
+11. Use the canvas **Undo** / **Redo** buttons for Draw in Canvas actions from the current session, or use **Clear drawings from active canvas** as needed.
 
 ## Notes
 

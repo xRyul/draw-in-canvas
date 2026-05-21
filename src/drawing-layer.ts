@@ -18,6 +18,9 @@ const DRAG_MOVE_THRESHOLD = 1;
 const HIT_TARGET_PADDING = 10;
 const SAVE_DEBOUNCE_MS = 300;
 const TOOLBAR_LONG_PRESS_MS = 450;
+const HANDWRITTEN_EDGE_FOLLOW = 0.5;
+const HANDWRITTEN_TAPER_LENGTH_MULTIPLIER = 2.5;
+const HANDWRITTEN_TAPER_MIN_LENGTH = 6;
 const PRESET_STROKE_COLORS = [
 	{name: "Red", value: "#ef4444"},
 	{name: "Orange", value: "#f97316"},
@@ -126,6 +129,8 @@ export class DrawingLayer {
 	private redoButtonEl: HTMLElement | null = null;
 	private activeStroke: CanvasStroke | null = null;
 	private activeStrokeGroupEl: SVGGElement | null = null;
+	private activeStrokePathEl: SVGPathElement | null = null;
+	private activeStrokePreviewFrameId: number | null = null;
 	private readonly selectedStrokeIds = new Set<string>();
 	private selectionBoxEl: SVGRectElement | null = null;
 	private dragState: StrokeDragState | null = null;
@@ -187,6 +192,8 @@ export class DrawingLayer {
 			this.domSyncFrameId = null;
 		}
 
+		this.cancelActiveStrokePreviewUpdate();
+
 		for (const dispose of this.renderDisposers.splice(0)) {
 			dispose();
 		}
@@ -242,9 +249,19 @@ export class DrawingLayer {
 	}
 
 	setSettings(settings: DrawInCanvasSettings): void {
+		const shouldRerenderStrokes = settings.beautifulStrokes !== this.settings.beautifulStrokes;
+
 		this.settings = {...settings};
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
+
+		if (shouldRerenderStrokes) {
+			if (this.activeStroke) {
+				this.updateActiveStrokePreview();
+			} else {
+				this.renderStrokes();
+			}
+		}
 	}
 
 	async clear(): Promise<void> {
@@ -833,6 +850,7 @@ export class DrawingLayer {
 		groupEl.classList.add("draw-in-canvas-stroke-wrapper");
 		groupEl.classList.toggle("is-selected", this.selectedStrokeIds.has(stroke.id));
 		groupEl.dataset.strokeId = stroke.id;
+
 		groupEl.appendChild(this.createPathEl(stroke));
 		groupEl.appendChild(this.createHitPathEl(stroke));
 		this.strokeGroupById.set(stroke.id, groupEl);
@@ -842,20 +860,37 @@ export class DrawingLayer {
 	private createPathEl(stroke: CanvasStroke): SVGPathElement {
 		const pathEl = document.createElementNS(SVG_NS, "path");
 		pathEl.classList.add("draw-in-canvas-stroke");
-		pathEl.setAttribute("d", pointsToSvgPath(stroke.points));
+		this.updateVisibleStrokePathEl(pathEl, stroke);
+		return pathEl;
+	}
+
+	private updateVisibleStrokePathEl(pathEl: SVGPathElement, stroke: CanvasStroke): void {
+		pathEl.classList.toggle("mod-handwritten", this.settings.beautifulStrokes);
+		pathEl.setAttribute("pointer-events", "none");
+
+		if (this.settings.beautifulStrokes) {
+			pathEl.setAttribute("d", getHandwrittenStrokeShapePath(stroke));
+			pathEl.setAttribute("fill", stroke.color);
+			pathEl.setAttribute("stroke", "none");
+			pathEl.removeAttribute("stroke-width");
+			pathEl.removeAttribute("stroke-linecap");
+			pathEl.removeAttribute("stroke-linejoin");
+			return;
+		}
+
+		pathEl.setAttribute("d", this.getStrokeCenterPath(stroke));
 		pathEl.setAttribute("stroke", stroke.color);
 		pathEl.setAttribute("stroke-width", stroke.width.toString());
 		pathEl.setAttribute("fill", "none");
 		pathEl.setAttribute("stroke-linecap", "round");
 		pathEl.setAttribute("stroke-linejoin", "round");
-		pathEl.setAttribute("pointer-events", "none");
-		return pathEl;
 	}
+
 
 	private createHitPathEl(stroke: CanvasStroke): SVGPathElement {
 		const pathEl = document.createElementNS(SVG_NS, "path");
 		pathEl.classList.add("draw-in-canvas-stroke-hit");
-		pathEl.setAttribute("d", pointsToSvgPath(stroke.points));
+		pathEl.setAttribute("d", this.getStrokeCenterPath(stroke));
 		pathEl.setAttribute("stroke", "transparent");
 		pathEl.setAttribute("stroke-width", Math.max(stroke.width + HIT_TARGET_PADDING, 12).toString());
 		pathEl.setAttribute("fill", "none");
@@ -865,17 +900,9 @@ export class DrawingLayer {
 		return pathEl;
 	}
 
-	private createSegmentPathEl(from: StrokePoint, to: StrokePoint, stroke: CanvasStroke): SVGPathElement {
-		const pathEl = document.createElementNS(SVG_NS, "path");
-		pathEl.classList.add("draw-in-canvas-stroke");
-		pathEl.setAttribute("d", `${pointToMoveCommand(from)} ${pointToLineCommand(to)}`);
-		pathEl.setAttribute("stroke", stroke.color);
-		pathEl.setAttribute("stroke-width", stroke.width.toString());
-		pathEl.setAttribute("fill", "none");
-		pathEl.setAttribute("stroke-linecap", "round");
-		pathEl.setAttribute("stroke-linejoin", "round");
-		pathEl.setAttribute("pointer-events", "none");
-		return pathEl;
+
+	private getStrokeCenterPath(stroke: CanvasStroke): string {
+		return pointsToSvgPath(stroke.points, {smooth: this.settings.beautifulStrokes});
 	}
 
 	private readonly handlePointerDown = (event: PointerEvent): void => {
@@ -910,9 +937,12 @@ export class DrawingLayer {
 		const strokeGroupEl = document.createElementNS(SVG_NS, "g");
 		strokeGroupEl.classList.add("draw-in-canvas-active-stroke");
 		strokeGroupEl.setAttribute("pointer-events", "none");
+		const activeStrokePathEl = this.createPathEl(stroke);
+		strokeGroupEl.appendChild(activeStrokePathEl);
 
 		this.activeStroke = stroke;
 		this.activeStrokeGroupEl = strokeGroupEl;
+		this.activeStrokePathEl = activeStrokePathEl;
 		this.addStroke(stroke);
 		this.svgEl.appendChild(strokeGroupEl);
 	};
@@ -937,7 +967,7 @@ export class DrawingLayer {
 		event.preventDefault();
 		event.stopPropagation();
 		this.activeStroke.points.push(point);
-		this.activeStrokeGroupEl.appendChild(this.createSegmentPathEl(previousPoint, point, this.activeStroke));
+		this.scheduleActiveStrokePreviewUpdate();
 	};
 
 	private readonly handlePointerUp = (event: PointerEvent): void => {
@@ -954,6 +984,34 @@ export class DrawingLayer {
 
 		this.finishActiveStroke();
 	};
+
+	private scheduleActiveStrokePreviewUpdate(): void {
+		if (this.activeStrokePreviewFrameId !== null) {
+			return;
+		}
+
+		this.activeStrokePreviewFrameId = window.requestAnimationFrame(() => {
+			this.activeStrokePreviewFrameId = null;
+			this.updateActiveStrokePreview();
+		});
+	}
+
+	private updateActiveStrokePreview(): void {
+		if (!this.activeStroke || !this.activeStrokePathEl) {
+			return;
+		}
+
+		this.updateVisibleStrokePathEl(this.activeStrokePathEl, this.activeStroke);
+	}
+
+	private cancelActiveStrokePreviewUpdate(): void {
+		if (this.activeStrokePreviewFrameId === null) {
+			return;
+		}
+
+		window.cancelAnimationFrame(this.activeStrokePreviewFrameId);
+		this.activeStrokePreviewFrameId = null;
+	}
 
 	private readonly handleKeyDown = (event: KeyboardEvent): void => {
 		if (event.key !== "Escape") {
@@ -1489,6 +1547,7 @@ export class DrawingLayer {
 		}
 
 		const completedStroke = this.activeStroke;
+		this.cancelActiveStrokePreviewUpdate();
 		const firstPoint = completedStroke.points[0];
 
 		if (firstPoint && completedStroke.points.length === 1) {
@@ -1498,13 +1557,13 @@ export class DrawingLayer {
 			};
 
 			completedStroke.points.push(dotEndPoint);
-			this.activeStrokeGroupEl?.appendChild(this.createSegmentPathEl(firstPoint, dotEndPoint, completedStroke));
 		}
 
 		this.setStrokeBounds(completedStroke);
 		this.activeStrokeGroupEl?.replaceWith(this.createStrokeGroupEl(completedStroke));
 		this.activeStroke = null;
 		this.activeStrokeGroupEl = null;
+		this.activeStrokePathEl = null;
 		this.pushHistory({type: "add-stroke", stroke: cloneStroke(completedStroke)});
 		this.scheduleSave();
 	}
@@ -1973,6 +2032,190 @@ export class DrawingLayer {
 	}
 }
 
+function getHandwrittenStrokeShapePath(stroke: CanvasStroke): string {
+	const shapePoints = getHandwrittenStrokeShapePoints(stroke);
+
+	if (!shapePoints) {
+		return "";
+	}
+
+	const lastRightPoint = shapePoints.right[shapePoints.right.length - 1];
+
+	if (!lastRightPoint) {
+		return "";
+	}
+
+	return `${pointsToSmoothClosedEdgePath(shapePoints.left)} L ${formatPathPoint(lastRightPoint)} ${pointsToSmoothClosedEdgePath(shapePoints.right, true)} Z`;
+}
+
+function getHandwrittenStrokeShapePoints(stroke: CanvasStroke): {left: StrokePoint[]; right: StrokePoint[]} | null {
+	const usablePoints = getUsableStrokePoints(stroke.points);
+
+	if (usablePoints.length < 2) {
+		return null;
+	}
+
+	const left: StrokePoint[] = [];
+	const right: StrokePoint[] = [];
+	const seed = getStrokeSeed(stroke.id);
+	const cumulativeDistances = getCumulativeDistances(usablePoints);
+	const totalLength = cumulativeDistances[cumulativeDistances.length - 1] ?? 0;
+
+	for (let index = 0; index < usablePoints.length; index++) {
+		const point = usablePoints[index];
+
+		if (!point) {
+			continue;
+		}
+
+		const tangent = getStrokeTangent(usablePoints, index);
+
+		if (!tangent) {
+			continue;
+		}
+
+		const distanceFromStart = cumulativeDistances[index] ?? 0;
+		const distanceFromEnd = Math.max(0, totalLength - distanceFromStart);
+		const halfWidth = getHandwrittenHalfWidth(stroke.width, index, seed, distanceFromStart, distanceFromEnd);
+		const normal = {x: -tangent.y, y: tangent.x};
+
+		left.push({
+			x: roundCoordinate(point.x + normal.x * halfWidth),
+			y: roundCoordinate(point.y + normal.y * halfWidth),
+		});
+		right.push({
+			x: roundCoordinate(point.x - normal.x * halfWidth),
+			y: roundCoordinate(point.y - normal.y * halfWidth),
+		});
+	}
+
+	return left.length >= 2 && right.length >= 2 ? {left, right} : null;
+}
+
+function getUsableStrokePoints(points: readonly StrokePoint[]): StrokePoint[] {
+	const usablePoints: StrokePoint[] = [];
+
+	for (const point of points) {
+		const previousPoint = usablePoints[usablePoints.length - 1];
+
+		if (!previousPoint || distanceBetween(previousPoint, point) >= 0.01) {
+			usablePoints.push(point);
+		}
+	}
+
+	return usablePoints;
+}
+
+function getCumulativeDistances(points: readonly StrokePoint[]): number[] {
+	const distances = [0];
+
+	for (let index = 1; index < points.length; index++) {
+		const previousPoint = points[index - 1];
+		const point = points[index];
+		const previousDistance = distances[index - 1] ?? 0;
+
+		distances[index] = previousPoint && point
+			? previousDistance + distanceBetween(previousPoint, point)
+			: previousDistance;
+	}
+
+	return distances;
+}
+
+function getStrokeTangent(points: readonly StrokePoint[], index: number): StrokePoint | null {
+	const previousPoint = points[Math.max(0, index - 1)];
+	const nextPoint = points[Math.min(points.length - 1, index + 1)];
+
+	if (!previousPoint || !nextPoint) {
+		return null;
+	}
+
+	const dx = nextPoint.x - previousPoint.x;
+	const dy = nextPoint.y - previousPoint.y;
+	const length = Math.hypot(dx, dy);
+
+	if (length === 0) {
+		return null;
+	}
+
+	return {x: dx / length, y: dy / length};
+}
+
+function getHandwrittenHalfWidth(
+	width: number,
+	index: number,
+	seed: number,
+	distanceFromStart: number,
+	distanceFromEnd: number,
+): number {
+	const taperDistance = Math.max(HANDWRITTEN_TAPER_MIN_LENGTH, width * HANDWRITTEN_TAPER_LENGTH_MULTIPLIER);
+	const taperAmount = Math.min(1, distanceFromStart / taperDistance, distanceFromEnd / taperDistance);
+	const easedTaper = 0.24 + 0.76 * smoothStep(taperAmount);
+	const wobble = 1 + 0.045 * Math.sin(seed + index * 1.61803398875);
+	return Math.max(0.35, width * easedTaper * wobble / 2);
+}
+
+function smoothStep(value: number): number {
+	const clampedValue = Math.min(1, Math.max(0, value));
+	return clampedValue * clampedValue * (3 - 2 * clampedValue);
+}
+
+function pointsToSmoothClosedEdgePath(points: readonly StrokePoint[], reverse = false): string {
+	const pointCount = points.length;
+
+	if (pointCount === 0) {
+		return "";
+	}
+
+	const firstPoint = reverse ? points[pointCount - 1] : points[0];
+
+	if (!firstPoint) {
+		return "";
+	}
+
+	const commands = [reverse ? "" : `M ${formatPathPoint(firstPoint)}`];
+
+	for (let offset = 1; offset < pointCount; offset++) {
+		const currentIndex = reverse ? pointCount - 1 - offset : offset;
+		const previousIndex = reverse ? currentIndex + 1 : currentIndex - 1;
+		const currentPoint = points[currentIndex];
+		const previousPoint = points[previousIndex];
+
+		if (!currentPoint || !previousPoint) {
+			continue;
+		}
+
+		const softenedPoint = {
+			x: roundCoordinate(previousPoint.x + (currentPoint.x - previousPoint.x) * HANDWRITTEN_EDGE_FOLLOW),
+			y: roundCoordinate(previousPoint.y + (currentPoint.y - previousPoint.y) * HANDWRITTEN_EDGE_FOLLOW),
+		};
+
+		commands.push(`Q ${formatPathPoint(previousPoint)} ${formatPathPoint(softenedPoint)}`);
+	}
+
+	const lastPoint = reverse ? points[0] : points[pointCount - 1];
+
+	if (lastPoint) {
+		commands.push(`L ${formatPathPoint(lastPoint)}`);
+	}
+
+	return commands.filter(Boolean).join(" ");
+}
+
+function formatPathPoint(point: StrokePoint): string {
+	return `${roundCoordinate(point.x)} ${roundCoordinate(point.y)}`;
+}
+
+function getStrokeSeed(strokeId: string): number {
+	let seed = 0;
+
+	for (let index = 0; index < strokeId.length; index++) {
+		seed = (seed * 31 + strokeId.charCodeAt(index)) % 9973;
+	}
+
+	return seed;
+}
+
 function trySetPointerCapture(element: Element, pointerId: number): void {
 	try {
 		element.setPointerCapture(pointerId);
@@ -2039,15 +2282,6 @@ function isNativeCanvasContentTarget(target: EventTarget | null): boolean {
 function isPresent<T>(value: T | null): value is T {
 	return value !== null;
 }
-
-function pointToMoveCommand(point: StrokePoint): string {
-	return `M ${point.x} ${point.y}`;
-}
-
-function pointToLineCommand(point: StrokePoint): string {
-	return `L ${point.x} ${point.y}`;
-}
-
 function distanceBetween(a: StrokePoint, b: StrokePoint): number {
 	return Math.hypot(a.x - b.x, a.y - b.y);
 }
