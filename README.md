@@ -47,8 +47,8 @@ pnpm dev
 1. Open a `.canvas` file in Obsidian.
 2. Existing Draw in Canvas strokes are shown automatically.
 3. Use the pencil button in the right canvas controls, between **Canvas settings** and **Zoom in**, or run **Draw in Canvas: Toggle drawing mode on active canvas**.
-4. Long-press or right-click the pencil button, or focus it and press `ArrowDown`, to choose a predefined stroke color and adjust stroke size with the slider. Opening this palette also enables drawing mode, and a visual dot preview shows the selected size while you drag the slider.
-5. Enable **Handwritten strokes** in the plugin settings to smooth lines and use tapered, less perfectly round starts and ends.
+4. Long-press or right-click the pencil button, or focus it and press `ArrowDown`, to open the stroke palette. The palette chooses color, adjusts size, and contains a **Handwriting** toggle with advanced thinning, streamline, smoothing, and taper controls. Opening this palette also enables drawing mode, and a visual dot preview shows the selected size while you drag the size slider.
+5. The handwriting controls start from balanced perfect-freehand-style defaults: `0.5` thinning, streamline, and smoothing, plus a small taper for less rounded starts and ends. Select **Reset** in the palette to return those advanced controls to their defaults.
 6. Drag anywhere on the canvas to draw. Press `Esc`, select the pencil button, or run the toggle command again to stop drawing.
 7. Leave drawing mode, then select and drag an existing stroke to move it.
 8. Drag on an empty canvas area to use Obsidian's native marquee selection; it selects native canvas cards and Draw in Canvas strokes together.
@@ -62,3 +62,4 @@ pnpm dev
 - Drawings are saved into each `.canvas` file under `drawInCanvas`.
 - The plugin is local-only and does not make network requests.
 - The Obsidian canvas DOM is internal API, so this prototype may need small selector updates if Obsidian changes its canvas markup.
+- The handwritten stroke controls are ported into this plugin from the local perfect-freehand source; no runtime dependency is installed.

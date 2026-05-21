@@ -1,7 +1,15 @@
 import {Notice, Plugin} from "obsidian";
 import {CanvasTarget, getActiveCanvasTarget} from "./canvas-target";
 import {DrawingLayer, hideAllDrawInCanvasElements} from "./drawing-layer";
-import {DEFAULT_SETTINGS, DrawInCanvasSettingTab, DrawInCanvasSettings, normalizeStrokeWidth} from "./settings";
+import {
+	DEFAULT_SETTINGS,
+	DrawInCanvasSettingTab,
+	DrawInCanvasSettings,
+	FreehandSliderSetting,
+	normalizeDrawInCanvasSettings,
+	normalizeFreehandSliderValue,
+	normalizeStrokeWidth,
+} from "./settings";
 
 export default class DrawInCanvasPlugin extends Plugin {
 	settings: DrawInCanvasSettings = {...DEFAULT_SETTINGS};
@@ -133,6 +141,12 @@ export default class DrawInCanvasPlugin extends Plugin {
 		void this.saveSettings();
 	}
 
+	setFreehandSliderValue(setting: FreehandSliderSetting, value: number): void {
+		this.settings[setting] = normalizeFreehandSliderValue(setting, value);
+		this.refreshActiveLayerSettings();
+		void this.saveSettings();
+	}
+
 	setBeautifulStrokes(enabled: boolean): void {
 		this.settings.beautifulStrokes = enabled;
 		this.refreshActiveLayerSettings();
@@ -140,9 +154,7 @@ export default class DrawInCanvasPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<DrawInCanvasSettings>);
-		this.settings.strokeWidth = normalizeStrokeWidth(this.settings.strokeWidth);
-		this.settings.beautifulStrokes = this.settings.beautifulStrokes === true;
+		this.settings = normalizeDrawInCanvasSettings(await this.loadData() as Partial<DrawInCanvasSettings>);
 	}
 
 	async saveSettings(): Promise<void> {
@@ -196,6 +208,10 @@ export default class DrawInCanvasPlugin extends Plugin {
 				this.setStrokeColor(color);
 			}, (width) => {
 				this.setStrokeWidth(width);
+			}, (setting, value) => {
+				this.setFreehandSliderValue(setting, value);
+			}, (enabled) => {
+				this.setBeautifulStrokes(enabled);
 			});
 			this.layers.add(layer);
 

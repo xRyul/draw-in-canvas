@@ -1,7 +1,16 @@
 import {App, Notice, setIcon} from "obsidian";
 import {loadCanvasDrawingData, saveCanvasDrawingData} from "./canvas-file";
 import {CanvasTarget} from "./canvas-target";
-import {DrawInCanvasSettings, STROKE_WIDTH_MAX, STROKE_WIDTH_MIN, STROKE_WIDTH_STEP, normalizeStrokeWidth} from "./settings";
+import {
+	DrawInCanvasSettings,
+	FREEHAND_SLIDER_SETTINGS,
+	FreehandSliderSetting,
+	STROKE_WIDTH_MAX,
+	STROKE_WIDTH_MIN,
+	STROKE_WIDTH_STEP,
+	normalizeFreehandSliderValue,
+	normalizeStrokeWidth,
+} from "./settings";
 import {
 	CanvasDrawingData,
 	CanvasStroke,
@@ -11,6 +20,7 @@ import {
 	pointsToSvgPath,
 	roundCoordinate,
 } from "./types";
+import {getStroke} from "./perfect-freehand";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const MIN_POINT_DISTANCE = 1;
@@ -22,9 +32,6 @@ const MIN_RESIZE_SCALE = 0.05;
 const RESIZE_SCALE_EPSILON = 0.001;
 const SAVE_DEBOUNCE_MS = 300;
 const TOOLBAR_LONG_PRESS_MS = 450;
-const HANDWRITTEN_EDGE_FOLLOW = 0.5;
-const HANDWRITTEN_TAPER_LENGTH_MULTIPLIER = 2.5;
-const HANDWRITTEN_TAPER_MIN_LENGTH = 6;
 const PRESET_STROKE_COLORS = [
 	{name: "Red", value: "#ef4444"},
 	{name: "Orange", value: "#f97316"},
@@ -130,6 +137,8 @@ export class DrawingLayer {
 	private readonly requestToggleDrawingMode: () => void;
 	private readonly requestSetStrokeColor: (color: string) => void;
 	private readonly requestSetStrokeWidth: (width: number) => void;
+	private readonly requestSetFreehandSliderValue: (setting: FreehandSliderSetting, value: number) => void;
+	private readonly requestSetBeautifulStrokes: (enabled: boolean) => void;
 	private settings: DrawInCanvasSettings;
 	private drawingData: CanvasDrawingData = createEmptyDrawingData();
 	private readonly strokeById = new Map<string, CanvasStroke>();
@@ -183,6 +192,8 @@ export class DrawingLayer {
 		requestToggleDrawingMode: () => void,
 		requestSetStrokeColor: (color: string) => void,
 		requestSetStrokeWidth: (width: number) => void,
+		requestSetFreehandSliderValue: (setting: FreehandSliderSetting, value: number) => void,
+		requestSetBeautifulStrokes: (enabled: boolean) => void,
 	) {
 		this.app = app;
 		this.target = target;
@@ -190,6 +201,8 @@ export class DrawingLayer {
 		this.requestToggleDrawingMode = requestToggleDrawingMode;
 		this.requestSetStrokeColor = requestSetStrokeColor;
 		this.requestSetStrokeWidth = requestSetStrokeWidth;
+		this.requestSetFreehandSliderValue = requestSetFreehandSliderValue;
+		this.requestSetBeautifulStrokes = requestSetBeautifulStrokes;
 	}
 
 	async start(): Promise<void> {
@@ -276,7 +289,7 @@ export class DrawingLayer {
 	}
 
 	setSettings(settings: DrawInCanvasSettings): void {
-		const shouldRerenderStrokes = settings.beautifulStrokes !== this.settings.beautifulStrokes;
+		const shouldRerenderStrokes = shouldRerenderForSettingsChange(this.settings, settings);
 
 		this.settings = {...settings};
 		this.syncToolbarButton();
@@ -480,7 +493,7 @@ export class DrawingLayer {
 
 		const paletteEl = document.createElement("div");
 		paletteEl.classList.add("draw-in-canvas-color-palette");
-		paletteEl.setAttribute("role", "menu");
+		paletteEl.setAttribute("role", "dialog");
 
 		const paletteLabelEl = document.createElement("span");
 		paletteLabelEl.id = createStrokeId();
@@ -496,7 +509,6 @@ export class DrawingLayer {
 			swatchEl.type = "button";
 			swatchEl.classList.add("draw-in-canvas-color-swatch");
 			swatchEl.dataset.color = color.value;
-			swatchEl.setAttribute("role", "menuitemradio");
 			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
 			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
 			swatchEl.setCssStyles({backgroundColor: color.value});
@@ -573,19 +585,60 @@ export class DrawingLayer {
 		for (const swatchEl of Array.from(swatchEls)) {
 			const isSelected = colorsMatch(swatchEl.dataset.color ?? "", this.settings.strokeColor);
 			swatchEl.classList.toggle("is-selected", isSelected);
-			swatchEl.setAttribute("aria-checked", isSelected.toString());
+			swatchEl.setAttribute("aria-pressed", isSelected.toString());
 		}
 
-		const strokeWidth = normalizeStrokeWidth(this.settings.strokeWidth);
-		const widthSliderEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-stroke-width-slider");
-		const widthValueEl = this.colorPaletteEl?.querySelector<HTMLElement>(".draw-in-canvas-stroke-width-value");
+		const handwritingToggleEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-handwriting-toggle-input");
+		const handwritingControlsEl = this.colorPaletteEl?.querySelector<HTMLElement>(".draw-in-canvas-freehand-controls");
 
-		if (widthSliderEl) {
-			widthSliderEl.value = strokeWidth.toString();
+		if (handwritingToggleEl) {
+			handwritingToggleEl.checked = this.settings.beautifulStrokes;
 		}
 
-		if (widthValueEl) {
-			widthValueEl.textContent = formatStrokeWidth(strokeWidth);
+		handwritingControlsEl?.classList.toggle("is-disabled", !this.settings.beautifulStrokes);
+		handwritingControlsEl?.setAttribute("aria-disabled", (!this.settings.beautifulStrokes).toString());
+
+		this.syncPaletteSlider(
+			".draw-in-canvas-stroke-width-slider:not(.draw-in-canvas-freehand-slider)",
+			".draw-in-canvas-stroke-width-value",
+			normalizeStrokeWidth(this.settings.strokeWidth),
+			formatStrokeWidth,
+		);
+
+		for (const setting of getFreehandSliderSettingKeys()) {
+			const value = normalizeFreehandSliderValue(setting, this.settings[setting]);
+			const selector = `[data-freehand-setting="${setting}"]`;
+
+			this.syncPaletteSlider(
+				selector,
+				`[data-freehand-value="${setting}"]`,
+				value,
+				(valueToFormat) => formatFreehandSliderValue(setting, valueToFormat),
+			);
+
+			const sliderEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(selector);
+
+			if (sliderEl) {
+				sliderEl.disabled = !this.settings.beautifulStrokes;
+			}
+		}
+	}
+
+	private syncPaletteSlider(
+		sliderSelector: string,
+		valueSelector: string,
+		value: number,
+		formatValue: (value: number) => string,
+	): void {
+		const sliderEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(sliderSelector);
+		const valueEl = this.colorPaletteEl?.querySelector<HTMLElement>(valueSelector);
+
+		if (sliderEl) {
+			sliderEl.value = value.toString();
+		}
+
+		if (valueEl) {
+			valueEl.textContent = formatValue(value);
 		}
 	}
 
@@ -604,22 +657,18 @@ export class DrawingLayer {
 		const controlEl = document.createElement("div");
 		controlEl.classList.add("draw-in-canvas-stroke-width-control");
 
+		const strokeSectionEl = document.createElement("div");
+		strokeSectionEl.classList.add("draw-in-canvas-palette-section");
+		strokeSectionEl.appendChild(this.createPaletteSectionTitleEl("Stroke"));
+		strokeSectionEl.appendChild(this.createStrokeWidthSliderControlEl());
+		controlEl.appendChild(strokeSectionEl);
+		controlEl.appendChild(this.createHandwritingControlsEl());
+
+		return controlEl;
+	}
+
+	private createStrokeWidthSliderControlEl(): HTMLElement {
 		const inputId = createStrokeId();
-		const headerEl = document.createElement("div");
-		headerEl.classList.add("draw-in-canvas-stroke-width-header");
-
-		const labelEl = document.createElement("label");
-		labelEl.htmlFor = inputId;
-		labelEl.textContent = "Size";
-
-		const valueEl = document.createElement("output");
-		valueEl.classList.add("draw-in-canvas-stroke-width-value");
-		valueEl.setAttribute("for", inputId);
-		valueEl.setAttribute("aria-live", "polite");
-		valueEl.textContent = formatStrokeWidth(normalizeStrokeWidth(this.settings.strokeWidth));
-
-		headerEl.append(labelEl, valueEl);
-
 		const sliderEl = document.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider");
@@ -636,7 +685,107 @@ export class DrawingLayer {
 			this.addListener(sliderEl, "input", this.handleStrokeWidthSliderInput),
 		);
 
-		controlEl.append(headerEl, sliderEl);
+		return createSliderControlEl(
+			inputId,
+			"Size",
+			"draw-in-canvas-stroke-width-value",
+			formatStrokeWidth(normalizeStrokeWidth(this.settings.strokeWidth)),
+			sliderEl,
+		);
+	}
+
+	private createHandwritingControlsEl(): HTMLElement {
+		const sectionEl = document.createElement("div");
+		const titleId = createStrokeId();
+		sectionEl.classList.add("draw-in-canvas-palette-section", "draw-in-canvas-freehand-controls");
+		sectionEl.setAttribute("aria-labelledby", titleId);
+
+		const headerEl = document.createElement("div");
+		headerEl.classList.add("draw-in-canvas-palette-section-header");
+
+		const titleEl = this.createPaletteSectionTitleEl("Handwriting");
+		titleEl.id = titleId;
+
+		const headerActionsEl = document.createElement("div");
+		headerActionsEl.classList.add("draw-in-canvas-palette-section-actions");
+
+		const resetButtonEl = document.createElement("button");
+		resetButtonEl.type = "button";
+		resetButtonEl.classList.add("draw-in-canvas-palette-reset-button");
+		resetButtonEl.textContent = "Reset";
+		resetButtonEl.setAttribute("aria-label", "Reset handwriting controls to defaults");
+
+		const toggleLabelEl = document.createElement("label");
+		toggleLabelEl.classList.add("draw-in-canvas-handwriting-toggle");
+
+		const toggleEl = document.createElement("input");
+		toggleEl.classList.add("draw-in-canvas-handwriting-toggle-input");
+		toggleEl.type = "checkbox";
+		toggleEl.checked = this.settings.beautifulStrokes;
+		toggleEl.setAttribute("aria-label", "Enable handwritten strokes");
+
+		const toggleTextEl = document.createElement("span");
+		toggleTextEl.textContent = "On";
+
+		toggleLabelEl.append(toggleEl, toggleTextEl);
+		headerActionsEl.append(resetButtonEl, toggleLabelEl);
+		headerEl.append(titleEl, headerActionsEl);
+		sectionEl.appendChild(headerEl);
+
+		const descriptionEl = document.createElement("p");
+		descriptionEl.classList.add("draw-in-canvas-palette-section-description");
+		descriptionEl.textContent = "Pressure, smoothing, and taper for handwritten strokes.";
+		sectionEl.appendChild(descriptionEl);
+
+		for (const setting of getFreehandSliderSettingKeys()) {
+			sectionEl.appendChild(this.createFreehandSliderControlEl(setting));
+		}
+
+		this.colorPaletteDisposers.push(
+			this.addListener(toggleEl, "change", this.handleHandwritingToggleChange),
+			this.addListener(resetButtonEl, "click", this.handleFreehandResetClick),
+		);
+
+		return sectionEl;
+	}
+
+	private createPaletteSectionTitleEl(text: string): HTMLElement {
+		const titleEl = document.createElement("div");
+		titleEl.classList.add("draw-in-canvas-palette-section-title");
+		titleEl.textContent = text;
+		return titleEl;
+	}
+
+	private createFreehandSliderControlEl(setting: FreehandSliderSetting): HTMLElement {
+		const slider = FREEHAND_SLIDER_SETTINGS[setting];
+		const inputId = createStrokeId();
+		const value = normalizeFreehandSliderValue(setting, this.settings[setting]);
+		const sliderEl = document.createElement("input");
+		sliderEl.id = inputId;
+		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-freehand-slider");
+		sliderEl.type = "range";
+		sliderEl.min = slider.min.toString();
+		sliderEl.max = slider.max.toString();
+		sliderEl.step = slider.step.toString();
+		sliderEl.value = value.toString();
+		sliderEl.dataset.freehandSetting = setting;
+		sliderEl.setAttribute("aria-label", slider.ariaLabel);
+		sliderEl.disabled = !this.settings.beautifulStrokes;
+
+		this.colorPaletteDisposers.push(
+			this.addListener(sliderEl, "input", this.handleFreehandSliderInput),
+		);
+
+		const valueClassName = "draw-in-canvas-stroke-width-value";
+		const controlEl = createSliderControlEl(
+			inputId,
+			slider.label,
+			valueClassName,
+			formatFreehandSliderValue(setting, value),
+			sliderEl,
+		);
+		controlEl.classList.add("draw-in-canvas-freehand-control");
+		controlEl.querySelector("output")?.setAttribute("data-freehand-value", setting);
 		return controlEl;
 	}
 
@@ -649,6 +798,46 @@ export class DrawingLayer {
 
 		this.settings = {...this.settings, strokeWidth};
 		this.requestSetStrokeWidth(strokeWidth);
+		this.syncColorPaletteSelection();
+	}
+
+	private setFreehandSliderValue(setting: FreehandSliderSetting, value: number): void {
+		const nextValue = normalizeFreehandSliderValue(setting, value);
+
+		if (nextValue === normalizeFreehandSliderValue(setting, this.settings[setting])) {
+			return;
+		}
+
+		this.requestSetFreehandSliderValue(setting, nextValue);
+		this.settings = {...this.settings, [setting]: nextValue};
+		this.syncColorPaletteSelection();
+	}
+
+	private resetFreehandSliderValues(): void {
+		let nextSettings = this.settings;
+
+		for (const setting of getFreehandSliderSettingKeys()) {
+			const defaultValue = FREEHAND_SLIDER_SETTINGS[setting].defaultValue;
+
+			if (normalizeFreehandSliderValue(setting, nextSettings[setting]) === defaultValue) {
+				continue;
+			}
+
+			nextSettings = {...nextSettings, [setting]: defaultValue};
+			this.requestSetFreehandSliderValue(setting, defaultValue);
+		}
+
+		this.settings = nextSettings;
+		this.syncColorPaletteSelection();
+	}
+
+	private setBeautifulStrokes(enabled: boolean): void {
+		if (enabled === this.settings.beautifulStrokes) {
+			return;
+		}
+
+		this.settings = {...this.settings, beautifulStrokes: enabled};
+		this.requestSetBeautifulStrokes(enabled);
 		this.syncColorPaletteSelection();
 	}
 
@@ -885,19 +1074,19 @@ export class DrawingLayer {
 		return groupEl;
 	}
 
-	private createPathEl(stroke: CanvasStroke): SVGPathElement {
+	private createPathEl(stroke: CanvasStroke, isComplete = true): SVGPathElement {
 		const pathEl = document.createElementNS(SVG_NS, "path");
 		pathEl.classList.add("draw-in-canvas-stroke");
-		this.updateVisibleStrokePathEl(pathEl, stroke);
+		this.updateVisibleStrokePathEl(pathEl, stroke, isComplete);
 		return pathEl;
 	}
 
-	private updateVisibleStrokePathEl(pathEl: SVGPathElement, stroke: CanvasStroke): void {
+	private updateVisibleStrokePathEl(pathEl: SVGPathElement, stroke: CanvasStroke, isComplete = true): void {
 		pathEl.classList.toggle("mod-handwritten", this.settings.beautifulStrokes);
 		pathEl.setAttribute("pointer-events", "none");
 
 		if (this.settings.beautifulStrokes) {
-			pathEl.setAttribute("d", getHandwrittenStrokeShapePath(stroke));
+			pathEl.setAttribute("d", this.getHandwrittenStrokeShapePath(stroke, isComplete));
 			pathEl.setAttribute("fill", stroke.color);
 			pathEl.setAttribute("stroke", "none");
 			pathEl.removeAttribute("stroke-width");
@@ -933,6 +1122,27 @@ export class DrawingLayer {
 		return pointsToSvgPath(stroke.points, {smooth: this.settings.beautifulStrokes});
 	}
 
+	private getHandwrittenStrokeShapePath(stroke: CanvasStroke, isComplete: boolean): string {
+		const outlinePoints = getStroke(stroke.points, {
+			size: stroke.width,
+			thinning: this.settings.strokeThinning,
+			streamline: this.settings.strokeStreamline,
+			smoothing: this.settings.strokeSmoothing,
+			simulatePressure: true,
+			start: {
+				cap: this.settings.strokeTaperStart === 0,
+				taper: this.settings.strokeTaperStart,
+			},
+			end: {
+				cap: this.settings.strokeTaperEnd === 0,
+				taper: this.settings.strokeTaperEnd,
+			},
+			last: isComplete,
+		});
+
+		return getSvgPathFromStroke(outlinePoints);
+	}
+
 	private readonly handlePointerDown = (event: PointerEvent): void => {
 		if (event.button !== 0 || !this.captureEl) {
 			return;
@@ -965,7 +1175,7 @@ export class DrawingLayer {
 		const strokeGroupEl = document.createElementNS(SVG_NS, "g");
 		strokeGroupEl.classList.add("draw-in-canvas-active-stroke");
 		strokeGroupEl.setAttribute("pointer-events", "none");
-		const activeStrokePathEl = this.createPathEl(stroke);
+		const activeStrokePathEl = this.createPathEl(stroke, false);
 		strokeGroupEl.appendChild(activeStrokePathEl);
 
 		this.activeStroke = stroke;
@@ -1029,7 +1239,7 @@ export class DrawingLayer {
 			return;
 		}
 
-		this.updateVisibleStrokePathEl(this.activeStrokePathEl, this.activeStroke);
+		this.updateVisibleStrokePathEl(this.activeStrokePathEl, this.activeStroke, false);
 	}
 
 	private cancelActiveStrokePreviewUpdate(): void {
@@ -1165,6 +1375,38 @@ export class DrawingLayer {
 		const strokeWidth = Number(event.currentTarget.value);
 		this.setStrokeWidth(strokeWidth);
 		this.updateStrokeWidthPreview(strokeWidth);
+	};
+
+	private readonly handleFreehandSliderInput = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		const setting = getFreehandSliderSetting(event.currentTarget.dataset.freehandSetting);
+
+		if (!setting) {
+			return;
+		}
+
+		this.setFreehandSliderValue(setting, Number(event.currentTarget.value));
+	};
+
+	private readonly handleHandwritingToggleChange = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		this.setBeautifulStrokes(event.currentTarget.checked);
+	};
+
+	private readonly handleFreehandResetClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+		this.resetFreehandSliderValues();
 	};
 
 	private readonly handleStrokeWidthPreviewPointerMove = (event: PointerEvent): void => {
@@ -2339,188 +2581,97 @@ export class DrawingLayer {
 	}
 }
 
-function getHandwrittenStrokeShapePath(stroke: CanvasStroke): string {
-	const shapePoints = getHandwrittenStrokeShapePoints(stroke);
-
-	if (!shapePoints) {
-		return "";
-	}
-
-	const lastRightPoint = shapePoints.right[shapePoints.right.length - 1];
-
-	if (!lastRightPoint) {
-		return "";
-	}
-
-	return `${pointsToSmoothClosedEdgePath(shapePoints.left)} L ${formatPathPoint(lastRightPoint)} ${pointsToSmoothClosedEdgePath(shapePoints.right, true)} Z`;
-}
-
-function getHandwrittenStrokeShapePoints(stroke: CanvasStroke): {left: StrokePoint[]; right: StrokePoint[]} | null {
-	const usablePoints = getUsableStrokePoints(stroke.points);
-
-	if (usablePoints.length < 2) {
-		return null;
-	}
-
-	const left: StrokePoint[] = [];
-	const right: StrokePoint[] = [];
-	const seed = getStrokeSeed(stroke.id);
-	const cumulativeDistances = getCumulativeDistances(usablePoints);
-	const totalLength = cumulativeDistances[cumulativeDistances.length - 1] ?? 0;
-
-	for (let index = 0; index < usablePoints.length; index++) {
-		const point = usablePoints[index];
-
-		if (!point) {
-			continue;
-		}
-
-		const tangent = getStrokeTangent(usablePoints, index);
-
-		if (!tangent) {
-			continue;
-		}
-
-		const distanceFromStart = cumulativeDistances[index] ?? 0;
-		const distanceFromEnd = Math.max(0, totalLength - distanceFromStart);
-		const halfWidth = getHandwrittenHalfWidth(stroke.width, index, seed, distanceFromStart, distanceFromEnd);
-		const normal = {x: -tangent.y, y: tangent.x};
-
-		left.push({
-			x: roundCoordinate(point.x + normal.x * halfWidth),
-			y: roundCoordinate(point.y + normal.y * halfWidth),
-		});
-		right.push({
-			x: roundCoordinate(point.x - normal.x * halfWidth),
-			y: roundCoordinate(point.y - normal.y * halfWidth),
-		});
-	}
-
-	return left.length >= 2 && right.length >= 2 ? {left, right} : null;
-}
-
-function getUsableStrokePoints(points: readonly StrokePoint[]): StrokePoint[] {
-	const usablePoints: StrokePoint[] = [];
-
-	for (const point of points) {
-		const previousPoint = usablePoints[usablePoints.length - 1];
-
-		if (!previousPoint || distanceBetween(previousPoint, point) >= 0.01) {
-			usablePoints.push(point);
-		}
-	}
-
-	return usablePoints;
-}
-
-function getCumulativeDistances(points: readonly StrokePoint[]): number[] {
-	const distances = [0];
-
-	for (let index = 1; index < points.length; index++) {
-		const previousPoint = points[index - 1];
-		const point = points[index];
-		const previousDistance = distances[index - 1] ?? 0;
-
-		distances[index] = previousPoint && point
-			? previousDistance + distanceBetween(previousPoint, point)
-			: previousDistance;
-	}
-
-	return distances;
-}
-
-function getStrokeTangent(points: readonly StrokePoint[], index: number): StrokePoint | null {
-	const previousPoint = points[Math.max(0, index - 1)];
-	const nextPoint = points[Math.min(points.length - 1, index + 1)];
-
-	if (!previousPoint || !nextPoint) {
-		return null;
-	}
-
-	const dx = nextPoint.x - previousPoint.x;
-	const dy = nextPoint.y - previousPoint.y;
-	const length = Math.hypot(dx, dy);
-
-	if (length === 0) {
-		return null;
-	}
-
-	return {x: dx / length, y: dy / length};
-}
-
-function getHandwrittenHalfWidth(
-	width: number,
-	index: number,
-	seed: number,
-	distanceFromStart: number,
-	distanceFromEnd: number,
-): number {
-	const taperDistance = Math.max(HANDWRITTEN_TAPER_MIN_LENGTH, width * HANDWRITTEN_TAPER_LENGTH_MULTIPLIER);
-	const taperAmount = Math.min(1, distanceFromStart / taperDistance, distanceFromEnd / taperDistance);
-	const easedTaper = 0.24 + 0.76 * smoothStep(taperAmount);
-	const wobble = 1 + 0.045 * Math.sin(seed + index * 1.61803398875);
-	return Math.max(0.35, width * easedTaper * wobble / 2);
-}
-
-function smoothStep(value: number): number {
-	const clampedValue = Math.min(1, Math.max(0, value));
-	return clampedValue * clampedValue * (3 - 2 * clampedValue);
-}
-
-function pointsToSmoothClosedEdgePath(points: readonly StrokePoint[], reverse = false): string {
+function getSvgPathFromStroke(points: readonly [number, number][], closed = true): string {
 	const pointCount = points.length;
 
-	if (pointCount === 0) {
+	if (pointCount < 4) {
 		return "";
 	}
 
-	const firstPoint = reverse ? points[pointCount - 1] : points[0];
+	let firstPoint = points[0];
+	let controlPoint = points[1];
+	const nextPoint = points[2];
 
-	if (!firstPoint) {
+	if (!firstPoint || !controlPoint || !nextPoint) {
 		return "";
 	}
 
-	const commands = [reverse ? "" : `M ${formatPathPoint(firstPoint)}`];
+	let path = `M${formatSvgNumber(firstPoint[0])},${formatSvgNumber(firstPoint[1])} Q${formatSvgNumber(controlPoint[0])},${formatSvgNumber(controlPoint[1])} ${formatSvgNumber(average(controlPoint[0], nextPoint[0]))},${formatSvgNumber(average(controlPoint[1], nextPoint[1]))} T`;
 
-	for (let offset = 1; offset < pointCount; offset++) {
-		const currentIndex = reverse ? pointCount - 1 - offset : offset;
-		const previousIndex = reverse ? currentIndex + 1 : currentIndex - 1;
-		const currentPoint = points[currentIndex];
-		const previousPoint = points[previousIndex];
+	for (let index = 2, max = pointCount - 1; index < max; index++) {
+		firstPoint = points[index];
+		controlPoint = points[index + 1];
 
-		if (!currentPoint || !previousPoint) {
+		if (!firstPoint || !controlPoint) {
 			continue;
 		}
 
-		const softenedPoint = {
-			x: roundCoordinate(previousPoint.x + (currentPoint.x - previousPoint.x) * HANDWRITTEN_EDGE_FOLLOW),
-			y: roundCoordinate(previousPoint.y + (currentPoint.y - previousPoint.y) * HANDWRITTEN_EDGE_FOLLOW),
-		};
-
-		commands.push(`Q ${formatPathPoint(previousPoint)} ${formatPathPoint(softenedPoint)}`);
+		path += `${formatSvgNumber(average(firstPoint[0], controlPoint[0]))},${formatSvgNumber(average(firstPoint[1], controlPoint[1]))} `;
 	}
 
-	const lastPoint = reverse ? points[0] : points[pointCount - 1];
-
-	if (lastPoint) {
-		commands.push(`L ${formatPathPoint(lastPoint)}`);
-	}
-
-	return commands.filter(Boolean).join(" ");
+	return closed ? `${path}Z` : path;
 }
 
-function formatPathPoint(point: StrokePoint): string {
-	return `${roundCoordinate(point.x)} ${roundCoordinate(point.y)}`;
+function average(a: number, b: number): number {
+	return (a + b) / 2;
 }
 
-function getStrokeSeed(strokeId: string): number {
-	let seed = 0;
+function formatSvgNumber(value: number): string {
+	return roundCoordinate(value).toString();
+}
 
-	for (let index = 0; index < strokeId.length; index++) {
-		seed = (seed * 31 + strokeId.charCodeAt(index)) % 9973;
+function shouldRerenderForSettingsChange(previousSettings: DrawInCanvasSettings, nextSettings: DrawInCanvasSettings): boolean {
+	return previousSettings.beautifulStrokes !== nextSettings.beautifulStrokes
+		|| previousSettings.strokeThinning !== nextSettings.strokeThinning
+		|| previousSettings.strokeStreamline !== nextSettings.strokeStreamline
+		|| previousSettings.strokeSmoothing !== nextSettings.strokeSmoothing
+		|| previousSettings.strokeTaperStart !== nextSettings.strokeTaperStart
+		|| previousSettings.strokeTaperEnd !== nextSettings.strokeTaperEnd;
+}
+
+function getFreehandSliderSettingKeys(): FreehandSliderSetting[] {
+	return Object.keys(FREEHAND_SLIDER_SETTINGS) as FreehandSliderSetting[];
+}
+
+function getFreehandSliderSetting(value: string | undefined): FreehandSliderSetting | null {
+	if (!value) {
+		return null;
 	}
 
-	return seed;
+	return Object.prototype.hasOwnProperty.call(FREEHAND_SLIDER_SETTINGS, value) ? value as FreehandSliderSetting : null;
+}
+
+function formatFreehandSliderValue(setting: FreehandSliderSetting, value: number): string {
+	const slider = FREEHAND_SLIDER_SETTINGS[setting];
+	return slider.step < 1 ? value.toFixed(2) : Math.round(value).toString();
+}
+
+function createSliderControlEl(
+	inputId: string,
+	label: string,
+	valueClassName: string,
+	valueText: string,
+	sliderEl: HTMLInputElement,
+): HTMLElement {
+	const controlEl = document.createElement("div");
+	controlEl.classList.add("draw-in-canvas-stroke-slider-control");
+
+	const headerEl = document.createElement("div");
+	headerEl.classList.add("draw-in-canvas-stroke-width-header");
+
+	const labelEl = document.createElement("label");
+	labelEl.htmlFor = inputId;
+	labelEl.textContent = label;
+
+	const valueEl = document.createElement("output");
+	valueEl.classList.add(valueClassName);
+	valueEl.setAttribute("for", inputId);
+	valueEl.setAttribute("aria-live", "polite");
+	valueEl.textContent = valueText;
+
+	headerEl.append(labelEl, valueEl);
+	controlEl.append(headerEl, sliderEl);
+	return controlEl;
 }
 
 function trySetPointerCapture(element: Element, pointerId: number): void {
