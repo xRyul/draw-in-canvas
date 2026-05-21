@@ -439,6 +439,10 @@ export class DrawingLayer {
 			return;
 		}
 
+		if (!this.isDrawingEnabled()) {
+			this.enableDrawingMode();
+		}
+
 		if (this.colorPaletteEl?.isConnected) {
 			this.positionColorPalette();
 			this.syncColorPaletteSelection();

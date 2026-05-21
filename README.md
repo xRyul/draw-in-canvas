@@ -47,7 +47,7 @@ pnpm dev
 1. Open a `.canvas` file in Obsidian.
 2. Existing Draw in Canvas strokes are shown automatically.
 3. Use the pencil button in the right canvas controls, between **Canvas settings** and **Zoom in**, or run **Draw in Canvas: Toggle drawing mode on active canvas**.
-4. Long-press or right-click the pencil button, or focus it and press `ArrowDown`, to choose a predefined stroke color and adjust stroke size with the slider. A live cursor preview shows the selected size while you drag the slider.
+4. Long-press or right-click the pencil button, or focus it and press `ArrowDown`, to choose a predefined stroke color and adjust stroke size with the slider. Opening this palette also enables drawing mode, and a live cursor preview shows the selected size while you drag the slider.
 5. Enable **Handwritten strokes** in the plugin settings to smooth lines and use tapered, less perfectly round starts and ends.
 6. Drag anywhere on the canvas to draw. Press `Esc`, select the pencil button, or run the toggle command again to stop drawing.
 7. Leave drawing mode, then select and drag an existing stroke to move it.
