@@ -187,7 +187,9 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-stroke-slider-control {
 	display: grid;
-	gap: 6px;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 4px 8px;
 }
 
 .draw-in-canvas-freehand-control {
@@ -195,16 +197,20 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .draw-in-canvas-stroke-width-header {
-	display: grid;
-	grid-template-columns: minmax(96px, 1fr) auto;
-	align-items: center;
-	gap: 10px;
+	display: contents;
 	font-size: var(--font-ui-smaller);
 	line-height: 1.2;
 	color: var(--text-muted);
 }
 
+.draw-in-canvas-stroke-width-header label {
+	grid-column: 1 / -1;
+	grid-row: 1;
+}
+
 .draw-in-canvas-stroke-width-value {
+	grid-column: 2;
+	grid-row: 2;
 	display: inline-flex;
 	align-items: center;
 	justify-content: flex-end;
@@ -219,12 +225,18 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .draw-in-canvas-stroke-width-slider {
+	grid-column: 1;
+	grid-row: 2;
 	display: block;
 	width: 100%;
 	height: 20px;
 	margin: 0;
 	accent-color: var(--interactive-accent);
 	cursor: pointer;
+}
+
+.draw-in-canvas-color-palette input.draw-in-canvas-stroke-width-slider[type="range"] {
+	width: 100%;
 }
 
 .draw-in-canvas-stroke-width-preview {

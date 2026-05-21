@@ -818,10 +818,6 @@ export class DrawingLayer {
 		headerEl.append(titleEl, headerActionsEl);
 		sectionEl.appendChild(headerEl);
 
-		const descriptionEl = document.createElement("p");
-		descriptionEl.classList.add("draw-in-canvas-palette-section-description");
-		descriptionEl.textContent = "Pressure, smoothing, and taper for handwritten strokes.";
-		sectionEl.appendChild(descriptionEl);
 
 		for (const setting of getFreehandSliderSettingKeys()) {
 			sectionEl.appendChild(this.createFreehandSliderControlEl(setting));
