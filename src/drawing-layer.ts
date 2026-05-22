@@ -544,8 +544,6 @@ export class DrawingLayer {
 					event.preventDefault();
 					event.stopPropagation();
 					this.setStrokeColor(color.value);
-					this.closeColorPalette();
-					this.toolbarButtonEl?.focus({preventScroll: true});
 				}),
 			);
 
@@ -566,7 +564,6 @@ export class DrawingLayer {
 		this.colorPaletteDisposers.push(
 			this.addListener(document, "pointerdown", this.handleColorPaletteDocumentPointerDown, true),
 			this.addListener(document, "keydown", this.handleColorPaletteDocumentKeyDown, true),
-			this.addListener(window, "blur", this.handleColorPaletteWindowBlur),
 		);
 		this.syncColorPaletteSelection();
 
@@ -1740,8 +1737,6 @@ export class DrawingLayer {
 		}
 
 		this.setStrokeColor(color);
-		this.closeColorPalette();
-		this.toolbarButtonEl?.focus({preventScroll: true});
 	};
 
 	private readonly handleStrokeWidthSliderPointerDown = (event: PointerEvent): void => {
@@ -1867,10 +1862,6 @@ export class DrawingLayer {
 		event.stopPropagation();
 		this.closeColorPalette();
 		this.toolbarButtonEl?.focus({preventScroll: true});
-	};
-
-	private readonly handleColorPaletteWindowBlur = (): void => {
-		this.closeColorPalette();
 	};
 
 	private readonly handleStrokePointerDown = (event: PointerEvent): void => {
