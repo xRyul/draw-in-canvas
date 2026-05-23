@@ -55,7 +55,7 @@ const PRESET_STROKE_COLORS = [
 ] as const;
 const DEFAULT_CUSTOM_COLOR = "#8b5cf6";
 const CUSTOM_COLOR_SHADE_COUNT = 6;
-const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-width-preview";
+const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-width-preview";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const COLOR_PALETTE_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
 
@@ -73,6 +73,7 @@ interface RgbColor {
 }
 
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
+type BrushSliderSetting = "size" | "opacity";
 
 type DrawingHistoryAction =
 	| {type: "add-stroke"; stroke: CanvasStroke}
@@ -168,6 +169,9 @@ export class DrawingLayer {
 	private toolbarButtonEl: HTMLElement | null = null;
 	private selectButtonEl: HTMLElement | null = null;
 	private colorPaletteEl: HTMLElement | null = null;
+	private brushControlsEl: HTMLElement | null = null;
+	private brushUndoButtonEl: HTMLButtonElement | null = null;
+	private brushRedoButtonEl: HTMLButtonElement | null = null;
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
 	private shouldSelectCustomColorHexOnClick = false;
 	private toolbarPressState: ToolbarPressState | null = null;
@@ -198,6 +202,7 @@ export class DrawingLayer {
 	private readonly captureDisposers: Array<() => void> = [];
 	private readonly toolbarDisposers: Array<() => void> = [];
 	private readonly colorPaletteDisposers: Array<() => void> = [];
+	private readonly brushControlsDisposers: Array<() => void> = [];
 	private readonly strokeWidthPreviewDisposers: Array<() => void> = [];
 	private readonly renderDisposers: Array<() => void> = [];
 	private readonly strokeInteractionDisposers: Array<() => void> = [];
@@ -291,6 +296,7 @@ export class DrawingLayer {
 		this.selectStrokes([]);
 		this.mountRenderLayer();
 		this.mountCaptureLayer();
+		this.mountBrushControls();
 		this.syncToolbarButton();
 	}
 
@@ -303,6 +309,8 @@ export class DrawingLayer {
 
 		this.captureEl?.remove();
 		this.captureEl = null;
+
+		this.removeBrushControls();
 
 		if (this.positionedEl) {
 			this.positionedEl.setCssStyles({position: this.previousPosition});
@@ -320,6 +328,7 @@ export class DrawingLayer {
 		this.updateCustomColorFromStrokeColor();
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
+		this.syncBrushControls();
 
 		if (shouldRerenderStrokes) {
 			if (this.activeStroke) {
@@ -461,7 +470,7 @@ export class DrawingLayer {
 
 		const buttonEl = document.createElement("div");
 		buttonEl.classList.add("canvas-control-item", "draw-in-canvas-control-item", "draw-in-canvas-pencil-control-item");
-		buttonEl.setAttribute("aria-label", "Toggle drawing mode. Long press or right click for stroke colors");
+		buttonEl.setAttribute("aria-label", "Toggle drawing mode. Long press or right click for stroke color and settings");
 		buttonEl.setAttribute("data-tooltip-position", "left");
 		buttonEl.setAttribute("role", "button");
 		buttonEl.setAttribute("aria-haspopup", "menu");
@@ -515,6 +524,204 @@ export class DrawingLayer {
 		this.toolbarButtonEl.setAttribute("aria-expanded", (this.colorPaletteEl?.isConnected ?? false).toString());
 	}
 
+	private mountBrushControls(): void {
+		if (!this.captureEl) {
+			this.removeBrushControls();
+			return;
+		}
+
+		const controlsParentEl = this.findCanvasWrapperEl();
+
+		if (this.brushControlsEl?.isConnected && this.brushControlsEl.parentElement === controlsParentEl) {
+			this.syncBrushControls();
+			this.hideStaleElements();
+			return;
+		}
+
+		this.removeBrushControls();
+
+		const controlsEl = document.createElement("div");
+		controlsEl.classList.add("draw-in-canvas-brush-controls");
+		controlsEl.setAttribute("role", "group");
+		controlsEl.setAttribute("aria-label", "Brush size and opacity");
+
+		const colorButtonEl = this.createBrushColorButtonEl();
+		const undoButtonEl = this.createBrushHistoryButtonEl("undo");
+		const redoButtonEl = this.createBrushHistoryButtonEl("redo");
+
+		controlsEl.append(
+			this.createBrushSizeSliderControlEl(),
+			colorButtonEl,
+			this.createBrushOpacitySliderControlEl(),
+			undoButtonEl,
+			redoButtonEl,
+		);
+
+		controlsParentEl.appendChild(controlsEl);
+		this.brushControlsEl = controlsEl;
+		this.brushUndoButtonEl = undoButtonEl;
+		this.brushRedoButtonEl = redoButtonEl;
+		this.syncBrushControls();
+		this.hideStaleElements();
+	}
+
+	private removeBrushControls(): void {
+		this.closeStrokeWidthPreview();
+
+		for (const dispose of this.brushControlsDisposers.splice(0)) {
+			dispose();
+		}
+
+		this.brushControlsEl?.remove();
+		this.brushControlsEl = null;
+		this.brushUndoButtonEl = null;
+		this.brushRedoButtonEl = null;
+	}
+
+	private createBrushSizeSliderControlEl(): HTMLElement {
+		const sliderEl = createBrushSliderControlEl(
+			"size",
+			"Brush size",
+			"draw-in-canvas-brush-size-value",
+			formatStrokeWidth(normalizeStrokeWidth(this.settings.strokeWidth)),
+		);
+		sliderEl.classList.add("draw-in-canvas-brush-size-slider");
+
+		this.brushControlsDisposers.push(
+			this.addListener(sliderEl, "pointerdown", this.handleBrushSliderPointerDown),
+			this.addListener(sliderEl, "pointermove", this.handleBrushSliderPointerMove),
+			this.addListener(sliderEl, "pointerup", this.handleBrushSliderPointerUp),
+			this.addListener(sliderEl, "pointercancel", this.handleBrushSliderPointerUp),
+			this.addListener(sliderEl, "keydown", this.handleBrushSliderKeyDown),
+		);
+
+		return sliderEl;
+	}
+
+	private createBrushColorButtonEl(): HTMLButtonElement {
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("draw-in-canvas-brush-color-button");
+		buttonEl.setAttribute("aria-label", "Open stroke color and settings");
+
+		this.brushControlsDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleBrushButtonPointerDown),
+			this.addListener(buttonEl, "click", this.handleBrushColorButtonClick),
+			this.addListener(buttonEl, "keydown", this.handleBrushButtonKeyDown),
+		);
+
+		return buttonEl;
+	}
+
+	private createBrushOpacitySliderControlEl(): HTMLElement {
+		const sliderEl = createBrushSliderControlEl(
+			"opacity",
+			"Brush opacity",
+			"draw-in-canvas-brush-opacity-value",
+			formatStrokeOpacity(normalizeStrokeOpacity(this.settings.strokeOpacity)),
+		);
+		sliderEl.classList.add("draw-in-canvas-brush-opacity-slider");
+
+		this.brushControlsDisposers.push(
+			this.addListener(sliderEl, "pointerdown", this.handleBrushSliderPointerDown),
+			this.addListener(sliderEl, "pointermove", this.handleBrushSliderPointerMove),
+			this.addListener(sliderEl, "pointerup", this.handleBrushSliderPointerUp),
+			this.addListener(sliderEl, "pointercancel", this.handleBrushSliderPointerUp),
+			this.addListener(sliderEl, "keydown", this.handleBrushSliderKeyDown),
+		);
+
+		return sliderEl;
+	}
+
+	private createBrushHistoryButtonEl(action: "undo" | "redo"): HTMLButtonElement {
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("draw-in-canvas-brush-history-button", `draw-in-canvas-brush-${action}-button`);
+		buttonEl.setAttribute("aria-label", action === "undo" ? "Undo last drawing stroke" : "Redo last drawing stroke");
+		setIcon(buttonEl, action === "undo" ? "undo-2" : "redo-2");
+
+		this.brushControlsDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleBrushButtonPointerDown),
+			this.addListener(buttonEl, "click", action === "undo" ? this.handleBrushUndoButtonClick : this.handleBrushRedoButtonClick),
+			this.addListener(buttonEl, "keydown", action === "undo" ? this.handleBrushUndoButtonKeyDown : this.handleBrushRedoButtonKeyDown),
+		);
+
+		return buttonEl;
+	}
+
+	private syncBrushControls(): void {
+		if (!this.brushControlsEl) {
+			return;
+		}
+
+		this.brushControlsEl.setCssProps({
+			"--draw-in-canvas-current-color": this.settings.strokeColor,
+		});
+
+		this.syncBrushSlider(
+			"size",
+			".draw-in-canvas-brush-size-slider",
+			".draw-in-canvas-brush-size-value",
+			normalizeStrokeWidth(this.settings.strokeWidth),
+			formatStrokeWidth,
+			"Brush size",
+		);
+		this.syncBrushSlider(
+			"opacity",
+			".draw-in-canvas-brush-opacity-slider",
+			".draw-in-canvas-brush-opacity-value",
+			normalizeStrokeOpacity(this.settings.strokeOpacity),
+			formatStrokeOpacity,
+			"Brush opacity",
+		);
+		this.syncBrushHistoryButtons();
+	}
+
+	private syncBrushSlider(
+		setting: BrushSliderSetting,
+		sliderSelector: string,
+		valueSelector: string,
+		value: number,
+		formatValue: (value: number) => string,
+		label: string,
+	): void {
+		const bounds = getBrushSliderBounds(setting);
+		const valueText = formatValue(value);
+		const sliderEl = this.brushControlsEl?.querySelector<HTMLElement>(sliderSelector);
+		const valueEl = this.brushControlsEl?.querySelector<HTMLElement>(valueSelector);
+
+		if (sliderEl) {
+			sliderEl.title = `${label}: ${valueText}`;
+			sliderEl.setCssProps({"--draw-in-canvas-brush-slider-position": formatBrushSliderThumbPosition(setting, value)});
+			sliderEl.setAttribute("aria-valuemin", bounds.min.toString());
+			sliderEl.setAttribute("aria-valuemax", bounds.max.toString());
+			sliderEl.setAttribute("aria-valuenow", normalizeBrushSliderValue(setting, value).toString());
+			sliderEl.setAttribute("aria-valuetext", valueText);
+		}
+
+		if (valueEl) {
+			valueEl.textContent = valueText;
+		}
+	}
+
+	private syncBrushHistoryButtons(): void {
+		const canUndo = this.undoStack.length > 0;
+		const canRedo = this.redoStack.length > 0;
+
+		this.syncBrushHistoryButton(this.brushUndoButtonEl, canUndo);
+		this.syncBrushHistoryButton(this.brushRedoButtonEl, canRedo);
+	}
+
+	private syncBrushHistoryButton(buttonEl: HTMLButtonElement | null, isEnabled: boolean): void {
+		if (!buttonEl) {
+			return;
+		}
+
+		buttonEl.disabled = !isEnabled;
+		buttonEl.classList.toggle("is-disabled", !isEnabled);
+		buttonEl.setAttribute("aria-disabled", (!isEnabled).toString());
+	}
+
 	private openColorPalette(): void {
 		if (!this.toolbarGroupEl || !this.toolbarButtonEl) {
 			return;
@@ -539,7 +746,7 @@ export class DrawingLayer {
 		const paletteLabelEl = document.createElement("span");
 		paletteLabelEl.id = createStrokeId();
 		paletteLabelEl.classList.add("draw-in-canvas-visually-hidden");
-		paletteLabelEl.textContent = "Stroke color and size";
+		paletteLabelEl.textContent = "Stroke color and settings";
 		paletteEl.setAttribute("aria-labelledby", paletteLabelEl.id);
 		paletteEl.appendChild(paletteLabelEl);
 
@@ -642,24 +849,10 @@ export class DrawingLayer {
 		handwritingControlsEl?.setAttribute("aria-disabled", (!this.settings.beautifulStrokes).toString());
 
 		this.syncPaletteSlider(
-			".draw-in-canvas-stroke-width-slider:not(.draw-in-canvas-freehand-slider):not(.draw-in-canvas-stroke-hardness-slider):not(.draw-in-canvas-stroke-opacity-slider)",
-			".draw-in-canvas-stroke-width-value",
-			normalizeStrokeWidth(this.settings.strokeWidth),
-			formatStrokeWidth,
-		);
-
-		this.syncPaletteSlider(
 			".draw-in-canvas-stroke-hardness-slider",
 			".draw-in-canvas-stroke-hardness-value",
 			normalizeStrokeHardness(this.settings.strokeHardness),
 			formatStrokeHardness,
-		);
-
-		this.syncPaletteSlider(
-			".draw-in-canvas-stroke-opacity-slider",
-			".draw-in-canvas-stroke-opacity-value",
-			normalizeStrokeOpacity(this.settings.strokeOpacity),
-			formatStrokeOpacity,
 		);
 
 		for (const setting of getFreehandSliderSettingKeys()) {
@@ -762,6 +955,7 @@ export class DrawingLayer {
 		this.requestSetStrokeColor(color);
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
+		this.syncBrushControls();
 	}
 
 	private createNativeColorPickerEl(): HTMLElement {
@@ -858,40 +1052,11 @@ export class DrawingLayer {
 		const strokeSectionEl = document.createElement("div");
 		strokeSectionEl.classList.add("draw-in-canvas-palette-section");
 		strokeSectionEl.appendChild(this.createPaletteSectionTitleEl("Stroke"));
-		strokeSectionEl.appendChild(this.createStrokeWidthSliderControlEl());
 		strokeSectionEl.appendChild(this.createStrokeHardnessSliderControlEl());
-		strokeSectionEl.appendChild(this.createStrokeOpacitySliderControlEl());
 		controlEl.appendChild(strokeSectionEl);
 		controlEl.appendChild(this.createHandwritingControlsEl());
 
 		return controlEl;
-	}
-
-	private createStrokeWidthSliderControlEl(): HTMLElement {
-		const inputId = createStrokeId();
-		const sliderEl = document.createElement("input");
-		sliderEl.id = inputId;
-		sliderEl.classList.add("draw-in-canvas-stroke-width-slider");
-		sliderEl.type = "range";
-		sliderEl.min = STROKE_WIDTH_MIN.toString();
-		sliderEl.max = STROKE_WIDTH_MAX.toString();
-		sliderEl.step = STROKE_WIDTH_STEP.toString();
-		sliderEl.value = normalizeStrokeWidth(this.settings.strokeWidth).toString();
-		sliderEl.setAttribute("aria-label", "Stroke size");
-
-		this.colorPaletteDisposers.push(
-			this.addListener(sliderEl, "pointerdown", this.handleStrokeWidthSliderPointerDown),
-			this.addListener(sliderEl, "keydown", this.handleStrokeWidthSliderKeyDown),
-			this.addListener(sliderEl, "input", this.handleStrokeWidthSliderInput),
-		);
-
-		return createSliderControlEl(
-			inputId,
-			"Size",
-			"draw-in-canvas-stroke-width-value",
-			formatStrokeWidth(normalizeStrokeWidth(this.settings.strokeWidth)),
-			sliderEl,
-		);
 	}
 
 	private createStrokeHardnessSliderControlEl(): HTMLElement {
@@ -919,34 +1084,6 @@ export class DrawingLayer {
 			sliderEl,
 		);
 		controlEl.querySelector("output")?.classList.add("draw-in-canvas-stroke-hardness-value");
-		return controlEl;
-	}
-
-	private createStrokeOpacitySliderControlEl(): HTMLElement {
-		const inputId = createStrokeId();
-		const sliderEl = document.createElement("input");
-		sliderEl.id = inputId;
-		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-opacity-slider");
-		sliderEl.type = "range";
-		sliderEl.min = STROKE_OPACITY_MIN.toString();
-		sliderEl.max = STROKE_OPACITY_MAX.toString();
-		sliderEl.step = STROKE_OPACITY_STEP.toString();
-		sliderEl.value = normalizeStrokeOpacity(this.settings.strokeOpacity).toString();
-		sliderEl.setAttribute("aria-label", "Stroke opacity");
-
-		this.colorPaletteDisposers.push(
-			this.addListener(sliderEl, "keydown", this.handleStrokeWidthSliderKeyDown),
-			this.addListener(sliderEl, "input", this.handleStrokeOpacitySliderInput),
-		);
-
-		const controlEl = createSliderControlEl(
-			inputId,
-			"Opacity",
-			"draw-in-canvas-stroke-width-value",
-			formatStrokeOpacity(normalizeStrokeOpacity(this.settings.strokeOpacity)),
-			sliderEl,
-		);
-		controlEl.querySelector("output")?.classList.add("draw-in-canvas-stroke-opacity-value");
 		return controlEl;
 	}
 
@@ -1051,6 +1188,7 @@ export class DrawingLayer {
 		this.settings = {...this.settings, strokeWidth};
 		this.requestSetStrokeWidth(strokeWidth);
 		this.syncColorPaletteSelection();
+		this.syncBrushControls();
 	}
 
 	private setStrokeHardness(hardness: number): void {
@@ -1075,6 +1213,7 @@ export class DrawingLayer {
 		this.settings = {...this.settings, strokeOpacity};
 		this.requestSetStrokeOpacity(strokeOpacity);
 		this.syncColorPaletteSelection();
+		this.syncBrushControls();
 	}
 
 	private setFreehandSliderValue(setting: FreehandSliderSetting, value: number): void {
@@ -1268,6 +1407,7 @@ export class DrawingLayer {
 	private syncCanvasUndoRedoButtons(): void {
 		this.undoButtonEl?.classList.toggle("draw-in-canvas-can-undo", this.undoStack.length > 0);
 		this.redoButtonEl?.classList.toggle("draw-in-canvas-can-redo", this.redoStack.length > 0);
+		this.syncBrushHistoryButtons();
 	}
 
 	private syncStrokeInteractionListeners(): void {
@@ -1319,6 +1459,9 @@ export class DrawingLayer {
 			this.domSyncFrameId = null;
 			this.mountRenderLayer();
 			this.injectToolbarButton();
+			if (this.isDrawingEnabled()) {
+				this.mountBrushControls();
+			}
 		});
 	}
 
@@ -1593,7 +1736,7 @@ export class DrawingLayer {
 			return false;
 		}
 
-		if (event.target instanceof Node && this.colorPaletteEl?.contains(event.target)) {
+		if (event.target instanceof Node && (this.colorPaletteEl?.contains(event.target) || this.brushControlsEl?.contains(event.target))) {
 			return false;
 		}
 
@@ -1818,6 +1961,147 @@ export class DrawingLayer {
 		this.openStrokeWidthPreview(event, event.currentTarget);
 	};
 
+	private readonly handleBrushSliderPointerDown = (event: PointerEvent): void => {
+		if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		event.currentTarget.focus({preventScroll: true});
+		trySetPointerCapture(event.currentTarget, event.pointerId);
+		this.updateBrushSliderFromPointer(event.currentTarget, event);
+	};
+
+	private readonly handleBrushSliderPointerMove = (event: PointerEvent): void => {
+		if (!(event.currentTarget instanceof HTMLElement) || !event.currentTarget.hasPointerCapture(event.pointerId)) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.updateBrushSliderFromPointer(event.currentTarget, event);
+	};
+
+	private readonly handleBrushSliderPointerUp = (event: PointerEvent): void => {
+		if (!(event.currentTarget instanceof HTMLElement) || !event.currentTarget.hasPointerCapture(event.pointerId)) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		event.currentTarget.releasePointerCapture(event.pointerId);
+	};
+
+	private readonly handleBrushSliderKeyDown = (event: KeyboardEvent): void => {
+		if (!(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		const setting = getBrushSliderSetting(event.currentTarget.dataset.brushSlider);
+
+		if (!setting) {
+			return;
+		}
+
+		const nextValue = getBrushSliderKeyboardValue(setting, event, this.getBrushSliderCurrentValue(setting));
+
+		if (nextValue === null) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.setBrushSliderValue(setting, nextValue);
+	};
+
+	private readonly handleBrushButtonPointerDown = (event: PointerEvent): void => {
+		event.stopPropagation();
+	};
+
+	private readonly handleBrushButtonKeyDown = (event: KeyboardEvent): void => {
+		if (event.key !== "Tab") {
+			event.stopPropagation();
+		}
+	};
+
+	private readonly handleBrushColorButtonClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+		this.openColorPalette();
+	};
+
+	private readonly handleBrushUndoButtonClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (this.undoStack.length > 0) {
+			void this.undoLastStroke();
+		}
+	};
+
+	private readonly handleBrushRedoButtonClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (this.redoStack.length > 0) {
+			void this.redoLastStroke();
+		}
+	};
+
+	private readonly handleBrushUndoButtonKeyDown = (event: KeyboardEvent): void => {
+		if (!isActivationKey(event)) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (this.undoStack.length > 0) {
+			void this.undoLastStroke();
+		}
+	};
+
+	private readonly handleBrushRedoButtonKeyDown = (event: KeyboardEvent): void => {
+		if (!isActivationKey(event)) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (this.redoStack.length > 0) {
+			void this.redoLastStroke();
+		}
+	};
+
+	private updateBrushSliderFromPointer(sliderEl: HTMLElement, event: PointerEvent): void {
+		const setting = getBrushSliderSetting(sliderEl.dataset.brushSlider);
+
+		if (!setting) {
+			return;
+		}
+
+		this.setBrushSliderValue(setting, getBrushSliderValueFromPointer(setting, sliderEl, event.clientY));
+	}
+
+	private getBrushSliderCurrentValue(setting: BrushSliderSetting): number {
+		return setting === "size"
+			? normalizeStrokeWidth(this.settings.strokeWidth)
+			: normalizeStrokeOpacity(this.settings.strokeOpacity);
+	}
+
+	private setBrushSliderValue(setting: BrushSliderSetting, value: number): void {
+		if (setting === "size") {
+			const strokeWidth = normalizeStrokeWidth(value);
+			this.setStrokeWidth(strokeWidth);
+			this.updateStrokeWidthPreview(strokeWidth);
+			return;
+		}
+
+		this.setStrokeOpacity(value);
+	}
+
 	private readonly handleStrokeWidthSliderKeyDown = (event: KeyboardEvent): void => {
 		event.stopPropagation();
 	};
@@ -1914,7 +2198,7 @@ export class DrawingLayer {
 	private readonly handleColorPaletteDocumentPointerDown = (event: PointerEvent): void => {
 		const target = event.target;
 
-		if (target instanceof Node && (this.toolbarGroupEl?.contains(target) || this.colorPaletteEl?.contains(target))) {
+		if (target instanceof Node && (this.toolbarGroupEl?.contains(target) || this.colorPaletteEl?.contains(target) || this.brushControlsEl?.contains(target))) {
 			return;
 		}
 
@@ -2353,6 +2637,10 @@ export class DrawingLayer {
 			event.preventDefault();
 			event.stopPropagation();
 			this.enableSelectMode();
+			return;
+		}
+
+		if (event.target instanceof Node && this.brushControlsEl?.contains(event.target)) {
 			return;
 		}
 
@@ -3036,6 +3324,10 @@ export class DrawingLayer {
 			ownedElements.add(this.colorPaletteEl);
 		}
 
+		if (this.brushControlsEl) {
+			ownedElements.add(this.brushControlsEl);
+		}
+
 		hideStaleDrawInCanvasElements(this.target.containerEl, ownedElements);
 	}
 
@@ -3124,6 +3416,101 @@ function getFreehandSliderSetting(value: string | undefined): FreehandSliderSett
 function formatFreehandSliderValue(setting: FreehandSliderSetting, value: number): string {
 	const slider = FREEHAND_SLIDER_SETTINGS[setting];
 	return slider.step < 1 ? value.toFixed(2) : Math.round(value).toString();
+}
+
+function getBrushSliderSetting(value: string | undefined): BrushSliderSetting | null {
+	return value === "size" || value === "opacity" ? value : null;
+}
+
+function getBrushSliderBounds(setting: BrushSliderSetting): {min: number; max: number; step: number} {
+	return setting === "size"
+		? {min: STROKE_WIDTH_MIN, max: STROKE_WIDTH_MAX, step: STROKE_WIDTH_STEP}
+		: {min: STROKE_OPACITY_MIN, max: STROKE_OPACITY_MAX, step: STROKE_OPACITY_STEP};
+}
+
+function normalizeBrushSliderValue(setting: BrushSliderSetting, value: number): number {
+	return setting === "size" ? normalizeStrokeWidth(value) : normalizeStrokeOpacity(value);
+}
+
+function formatBrushSliderThumbPosition(setting: BrushSliderSetting, value: number): string {
+	const bounds = getBrushSliderBounds(setting);
+	const normalizedValue = normalizeBrushSliderValue(setting, value);
+	const ratio = (normalizedValue - bounds.min) / (bounds.max - bounds.min);
+	return `${(1 - ratio) * 100}%`;
+}
+
+function getBrushSliderValueFromPointer(setting: BrushSliderSetting, sliderEl: HTMLElement, clientY: number): number {
+	const bounds = getBrushSliderBounds(setting);
+	const rect = sliderEl.getBoundingClientRect();
+	const ratio = Math.min(1, Math.max(0, (rect.bottom - clientY) / rect.height));
+	return normalizeBrushSliderValue(setting, bounds.min + ratio * (bounds.max - bounds.min));
+}
+
+function getBrushSliderKeyboardValue(setting: BrushSliderSetting, event: KeyboardEvent, currentValue: number): number | null {
+	const bounds = getBrushSliderBounds(setting);
+	const largeStep = bounds.step * 5;
+
+	switch (event.key) {
+		case "ArrowUp":
+		case "ArrowRight":
+			return normalizeBrushSliderValue(setting, Math.min(bounds.max, currentValue + bounds.step));
+
+		case "ArrowDown":
+		case "ArrowLeft":
+			return normalizeBrushSliderValue(setting, Math.max(bounds.min, currentValue - bounds.step));
+
+		case "PageUp":
+			return normalizeBrushSliderValue(setting, Math.min(bounds.max, currentValue + largeStep));
+
+		case "PageDown":
+			return normalizeBrushSliderValue(setting, Math.max(bounds.min, currentValue - largeStep));
+
+		case "Home":
+			return bounds.min;
+
+		case "End":
+			return bounds.max;
+
+		default:
+			return null;
+	}
+}
+
+function createBrushSliderControlEl(
+	setting: BrushSliderSetting,
+	label: string,
+	valueClassName: string,
+	valueText: string,
+): HTMLElement {
+	const sliderEl = document.createElement("div");
+	const labelId = createStrokeId();
+
+	sliderEl.classList.add("draw-in-canvas-brush-slider-control", "draw-in-canvas-brush-slider");
+	sliderEl.dataset.brushSlider = setting;
+	sliderEl.tabIndex = 0;
+	sliderEl.setAttribute("role", "slider");
+	sliderEl.setAttribute("aria-labelledby", labelId);
+	sliderEl.setAttribute("aria-orientation", "vertical");
+
+	const labelEl = document.createElement("span");
+	labelEl.id = labelId;
+	labelEl.classList.add("draw-in-canvas-brush-slider-label");
+	labelEl.textContent = label;
+
+	const trackEl = document.createElement("span");
+	trackEl.classList.add("draw-in-canvas-brush-slider-track");
+
+	const thumbEl = document.createElement("span");
+	thumbEl.classList.add("draw-in-canvas-brush-slider-thumb");
+	trackEl.appendChild(thumbEl);
+
+	const valueEl = document.createElement("output");
+	valueEl.classList.add("draw-in-canvas-brush-slider-value", valueClassName);
+	valueEl.setAttribute("aria-live", "polite");
+	valueEl.textContent = valueText;
+
+	sliderEl.append(labelEl, trackEl, valueEl);
+	return sliderEl;
 }
 
 function createSliderControlEl(
