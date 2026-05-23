@@ -59,9 +59,9 @@ const PRESET_STROKE_COLORS = [
 ] as const;
 const DEFAULT_CUSTOM_COLOR = "#8b5cf6";
 const CUSTOM_COLOR_SHADE_COUNT = 6;
-const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor";
+const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
-const COLOR_PALETTE_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
+const BRUSH_POPOVER_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
 
 interface StrokeBounds {
 	minX: number;
@@ -186,9 +186,12 @@ export class DrawingLayer {
 	private toolbarButtonEl: HTMLElement | null = null;
 	private selectButtonEl: HTMLElement | null = null;
 	private colorPaletteEl: HTMLElement | null = null;
+	private strokeSettingsPaletteEl: HTMLElement | null = null;
 	private brushControlsEl: HTMLElement | null = null;
 	private brushColorButtonEl: HTMLButtonElement | null = null;
+	private brushSettingsButtonEl: HTMLButtonElement | null = null;
 	private colorPaletteTriggerEl: HTMLElement | null = null;
+	private strokeSettingsPaletteTriggerEl: HTMLElement | null = null;
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
 	private shouldSelectCustomColorHexOnClick = false;
 	private toolbarPressState: ToolbarPressState | null = null;
@@ -227,6 +230,7 @@ export class DrawingLayer {
 	private readonly captureDisposers: Array<() => void> = [];
 	private readonly toolbarDisposers: Array<() => void> = [];
 	private readonly colorPaletteDisposers: Array<() => void> = [];
+	private readonly strokeSettingsPaletteDisposers: Array<() => void> = [];
 	private readonly brushControlsDisposers: Array<() => void> = [];
 	private readonly brushPreviewDisposers: Array<() => void> = [];
 	private readonly renderDisposers: Array<() => void> = [];
@@ -354,6 +358,7 @@ export class DrawingLayer {
 		this.updateCustomColorFromStrokeColor();
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
+		this.syncStrokeSettingsPaletteControls();
 		this.syncBrushControls();
 
 		if (!this.settings.usePenCursorFallback) {
@@ -505,7 +510,7 @@ export class DrawingLayer {
 
 		const buttonEl = document.createElement("div");
 		buttonEl.classList.add("canvas-control-item", "draw-in-canvas-control-item", "draw-in-canvas-pencil-control-item");
-		buttonEl.setAttribute("aria-label", "Toggle drawing mode. Long press or press the down arrow for stroke color and settings");
+		buttonEl.setAttribute("aria-label", "Toggle drawing mode. Long press or press the down arrow for stroke color");
 		buttonEl.setAttribute("data-tooltip-position", "left");
 		buttonEl.setAttribute("role", "button");
 		buttonEl.setAttribute("aria-haspopup", "dialog");
@@ -532,7 +537,7 @@ export class DrawingLayer {
 	}
 
 	private removeToolbarButton(): void {
-		this.closeColorPalette();
+		this.closeBrushPopovers();
 		this.clearToolbarPressState();
 		for (const dispose of this.toolbarDisposers.splice(0)) {
 			dispose();
@@ -556,6 +561,7 @@ export class DrawingLayer {
 		this.toolbarButtonEl.setAttribute("aria-pressed", isEnabled.toString());
 		this.toolbarButtonEl.setCssProps({"--draw-in-canvas-current-color": this.settings.strokeColor});
 		this.syncColorPaletteExpandedState();
+		this.syncStrokeSettingsPaletteExpandedState();
 	}
 
 	private mountBrushControls(): void {
@@ -577,13 +583,14 @@ export class DrawingLayer {
 		const controlsEl = document.createElement("div");
 		controlsEl.classList.add("draw-in-canvas-brush-controls");
 		controlsEl.setAttribute("role", "group");
-		controlsEl.setAttribute("aria-label", "Brush size and opacity");
-
+		controlsEl.setAttribute("aria-label", "Brush size, color, stroke settings, and opacity");
 		const colorButtonEl = this.createBrushColorButtonEl();
+		const settingsButtonEl = this.createBrushSettingsButtonEl();
 
 		controlsEl.append(
 			this.createBrushSizeSliderControlEl(),
 			colorButtonEl,
+			settingsButtonEl,
 			this.createBrushOpacitySliderControlEl(),
 		);
 
@@ -594,7 +601,7 @@ export class DrawingLayer {
 	}
 
 	private removeBrushControls(): void {
-		this.closeColorPalette();
+		this.closeBrushPopovers();
 		this.closeBrushPreview();
 
 		for (const dispose of this.brushControlsDisposers.splice(0)) {
@@ -604,6 +611,7 @@ export class DrawingLayer {
 		this.brushControlsEl?.remove();
 		this.brushControlsEl = null;
 		this.brushColorButtonEl = null;
+		this.brushSettingsButtonEl = null;
 	}
 
 	private createBrushSizeSliderControlEl(): HTMLElement {
@@ -630,7 +638,7 @@ export class DrawingLayer {
 		const buttonEl = document.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("draw-in-canvas-brush-color-button");
-		buttonEl.setAttribute("aria-label", "Open stroke color and settings");
+		buttonEl.setAttribute("aria-label", "Open stroke color");
 		buttonEl.setAttribute("aria-haspopup", "dialog");
 		buttonEl.setAttribute("aria-expanded", (this.colorPaletteEl?.isConnected ?? false).toString());
 		this.brushColorButtonEl = buttonEl;
@@ -638,6 +646,25 @@ export class DrawingLayer {
 		this.brushControlsDisposers.push(
 			this.addListener(buttonEl, "pointerdown", this.handleBrushButtonPointerDown),
 			this.addListener(buttonEl, "click", this.handleBrushColorButtonClick),
+			this.addListener(buttonEl, "keydown", this.handleBrushButtonKeyDown),
+		);
+
+		return buttonEl;
+	}
+
+	private createBrushSettingsButtonEl(): HTMLButtonElement {
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("draw-in-canvas-brush-settings-button");
+		buttonEl.setAttribute("aria-label", "Open stroke and handwriting settings");
+		buttonEl.setAttribute("aria-haspopup", "dialog");
+		buttonEl.setAttribute("aria-expanded", (this.strokeSettingsPaletteEl?.isConnected ?? false).toString());
+		setIcon(buttonEl, "sliders-horizontal");
+		this.brushSettingsButtonEl = buttonEl;
+
+		this.brushControlsDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleBrushButtonPointerDown),
+			this.addListener(buttonEl, "click", this.handleBrushSettingsButtonClick),
 			this.addListener(buttonEl, "keydown", this.handleBrushButtonKeyDown),
 		);
 
@@ -674,6 +701,7 @@ export class DrawingLayer {
 		});
 
 		this.syncColorPaletteExpandedState();
+		this.syncStrokeSettingsPaletteExpandedState();
 
 		this.syncBrushSlider(
 			"size",
@@ -731,12 +759,14 @@ export class DrawingLayer {
 			return;
 		}
 
+		this.closeStrokeSettingsPalette();
 		this.colorPaletteTriggerEl = triggerEl;
 
 		if (this.colorPaletteEl?.isConnected) {
 			this.positionColorPalette();
 			this.syncColorPaletteSelection();
 			this.syncColorPaletteExpandedState();
+			this.syncPopoverOpenBodyClass();
 			return;
 		}
 
@@ -750,7 +780,7 @@ export class DrawingLayer {
 		const paletteLabelEl = document.createElement("span");
 		paletteLabelEl.id = createStrokeId();
 		paletteLabelEl.classList.add("draw-in-canvas-visually-hidden");
-		paletteLabelEl.textContent = "Stroke color and settings";
+		paletteLabelEl.textContent = "Stroke color";
 		paletteEl.setAttribute("aria-labelledby", paletteLabelEl.id);
 		paletteEl.appendChild(paletteLabelEl);
 
@@ -781,15 +811,13 @@ export class DrawingLayer {
 		paletteEl.appendChild(this.createNativeColorPickerEl());
 		paletteEl.appendChild(this.createCustomColorControlEl());
 
-		paletteEl.appendChild(this.createStrokeWidthControlEl());
-
 		document.body.appendChild(paletteEl);
 		this.colorPaletteEl = paletteEl;
-		document.body.classList.add(COLOR_PALETTE_OPEN_BODY_CLASS);
+		this.syncPopoverOpenBodyClass();
 		this.positionColorPalette();
 		this.syncColorPaletteExpandedState();
 		this.colorPaletteDisposers.push(
-			this.addListener(document, "pointerdown", this.handleColorPaletteDocumentPointerDown, true),
+			this.addListener(document, "pointerdown", this.handleBrushPopoverDocumentPointerDown, true),
 			this.addListener(document, "keydown", this.handleColorPaletteDocumentKeyDown, true),
 		);
 		this.syncColorPaletteSelection();
@@ -821,22 +849,100 @@ export class DrawingLayer {
 			return;
 		}
 
+		this.positionBrushPopover(this.colorPaletteEl, anchorEl);
+	}
+
+	private openStrokeSettingsPalette(): void {
+		if (!this.isDrawingEnabled()) {
+			this.enableDrawingMode();
+		}
+
+		const triggerEl = this.getStrokeSettingsPaletteTriggerEl();
+
+		if (!triggerEl) {
+			return;
+		}
+
+		this.closeColorPalette();
+		this.strokeSettingsPaletteTriggerEl = triggerEl;
+
+		if (this.strokeSettingsPaletteEl?.isConnected) {
+			this.positionStrokeSettingsPalette();
+			this.syncStrokeSettingsPaletteControls();
+			this.syncStrokeSettingsPaletteExpandedState();
+			this.syncPopoverOpenBodyClass();
+			return;
+		}
+
+		this.closeStrokeSettingsPalette();
+		this.strokeSettingsPaletteTriggerEl = triggerEl;
+
+		const paletteEl = document.createElement("div");
+		paletteEl.classList.add("draw-in-canvas-stroke-settings-palette");
+		paletteEl.setAttribute("role", "dialog");
+
+		const paletteLabelEl = document.createElement("span");
+		paletteLabelEl.id = createStrokeId();
+		paletteLabelEl.classList.add("draw-in-canvas-visually-hidden");
+		paletteLabelEl.textContent = "Stroke and handwriting settings";
+		paletteEl.setAttribute("aria-labelledby", paletteLabelEl.id);
+		paletteEl.appendChild(paletteLabelEl);
+		paletteEl.appendChild(this.createStrokeSettingsControlEl());
+
+		document.body.appendChild(paletteEl);
+		this.strokeSettingsPaletteEl = paletteEl;
+		this.syncPopoverOpenBodyClass();
+		this.positionStrokeSettingsPalette();
+		this.syncStrokeSettingsPaletteExpandedState();
+		this.strokeSettingsPaletteDisposers.push(
+			this.addListener(document, "pointerdown", this.handleBrushPopoverDocumentPointerDown, true),
+			this.addListener(document, "keydown", this.handleStrokeSettingsPaletteDocumentKeyDown, true),
+		);
+		this.syncStrokeSettingsPaletteControls();
+
+		const firstControlEl = paletteEl.querySelector<HTMLElement>("input, button");
+		window.requestAnimationFrame(() => firstControlEl?.focus({preventScroll: true}));
+	}
+
+	private getStrokeSettingsPaletteTriggerEl(): HTMLElement | null {
+		return this.brushSettingsButtonEl?.isConnected ? this.brushSettingsButtonEl : null;
+	}
+
+	private getStrokeSettingsPaletteAnchorEl(): HTMLElement | null {
+		if (this.brushControlsEl?.isConnected) {
+			return this.brushControlsEl;
+		}
+
+		return this.getStrokeSettingsPaletteTriggerEl();
+	}
+
+	private positionStrokeSettingsPalette(): void {
+		const anchorEl = this.getStrokeSettingsPaletteAnchorEl();
+
+		if (!this.strokeSettingsPaletteEl || !anchorEl) {
+			return;
+		}
+
+		this.positionBrushPopover(this.strokeSettingsPaletteEl, anchorEl);
+	}
+
+	private positionBrushPopover(popoverEl: HTMLElement, anchorEl: HTMLElement): void {
 		const anchorRect = anchorEl.getBoundingClientRect();
-		const paletteRect = this.colorPaletteEl.getBoundingClientRect();
+		const popoverRect = popoverEl.getBoundingClientRect();
 		const viewportMargin = 8;
 		const gap = 8;
 		const top = Math.max(
 			viewportMargin,
-			Math.min(anchorRect.top, window.innerHeight - paletteRect.height - viewportMargin),
+			Math.min(anchorRect.top, window.innerHeight - popoverRect.height - viewportMargin),
 		);
 
 		if (this.brushControlsEl?.isConnected) {
 			const left = Math.max(
 				viewportMargin,
-				Math.min(anchorRect.right + gap, window.innerWidth - paletteRect.width - viewportMargin),
+				Math.min(anchorRect.right + gap, window.innerWidth - popoverRect.width - viewportMargin),
 			);
 
-			this.colorPaletteEl.setCssStyles({
+			popoverEl.setCssStyles({
 				top: `${top}px`,
 				left: `${left}px`,
 				right: "auto",
@@ -846,11 +952,16 @@ export class DrawingLayer {
 
 		const right = Math.max(viewportMargin, window.innerWidth - anchorRect.left + gap);
 
-		this.colorPaletteEl.setCssStyles({
+		popoverEl.setCssStyles({
 			top: `${top}px`,
 			right: `${right}px`,
 			left: "auto",
 		});
+	}
+
+	private closeBrushPopovers(): void {
+		this.closeColorPalette();
+		this.closeStrokeSettingsPalette();
 	}
 
 	private closeColorPalette(): void {
@@ -862,14 +973,39 @@ export class DrawingLayer {
 		this.colorPaletteEl?.remove();
 		this.colorPaletteEl = null;
 		this.colorPaletteTriggerEl = null;
-		document.body.classList.remove(COLOR_PALETTE_OPEN_BODY_CLASS);
+		this.syncPopoverOpenBodyClass();
 		this.syncColorPaletteExpandedState();
+	}
+
+	private closeStrokeSettingsPalette(): void {
+		this.closeBrushPreview();
+		for (const dispose of this.strokeSettingsPaletteDisposers.splice(0)) {
+			dispose();
+		}
+
+		this.strokeSettingsPaletteEl?.remove();
+		this.strokeSettingsPaletteEl = null;
+		this.strokeSettingsPaletteTriggerEl = null;
+		this.syncPopoverOpenBodyClass();
+		this.syncStrokeSettingsPaletteExpandedState();
+	}
+
+	private syncPopoverOpenBodyClass(): void {
+		document.body.classList.toggle(
+			BRUSH_POPOVER_OPEN_BODY_CLASS,
+			(this.colorPaletteEl?.isConnected ?? false) || (this.strokeSettingsPaletteEl?.isConnected ?? false),
+		);
 	}
 
 	private syncColorPaletteExpandedState(): void {
 		const isOpen = (this.colorPaletteEl?.isConnected ?? false).toString();
 		this.toolbarButtonEl?.setAttribute("aria-expanded", isOpen);
 		this.brushColorButtonEl?.setAttribute("aria-expanded", isOpen);
+	}
+
+	private syncStrokeSettingsPaletteExpandedState(): void {
+		const isOpen = (this.strokeSettingsPaletteEl?.isConnected ?? false).toString();
+		this.brushSettingsButtonEl?.setAttribute("aria-expanded", isOpen);
 	}
 
 	private syncColorPaletteSelection(): void {
@@ -882,9 +1018,12 @@ export class DrawingLayer {
 		}
 
 		this.syncCustomColorControls();
+	}
 
-		const handwritingToggleEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-handwriting-toggle-input");
-		const handwritingControlsEl = this.colorPaletteEl?.querySelector<HTMLElement>(".draw-in-canvas-freehand-controls");
+	private syncStrokeSettingsPaletteControls(): void {
+		const paletteEl = this.strokeSettingsPaletteEl;
+		const handwritingToggleEl = paletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-handwriting-toggle-input");
+		const handwritingControlsEl = paletteEl?.querySelector<HTMLElement>(".draw-in-canvas-freehand-controls");
 
 		if (handwritingToggleEl) {
 			handwritingToggleEl.checked = this.settings.beautifulStrokes;
@@ -894,6 +1033,7 @@ export class DrawingLayer {
 		handwritingControlsEl?.setAttribute("aria-disabled", (!this.settings.beautifulStrokes).toString());
 
 		this.syncPaletteSlider(
+			paletteEl,
 			".draw-in-canvas-stroke-hardness-slider",
 			".draw-in-canvas-stroke-hardness-value",
 			normalizeStrokeHardness(this.settings.strokeHardness),
@@ -905,13 +1045,14 @@ export class DrawingLayer {
 			const selector = `[data-freehand-setting="${setting}"]`;
 
 			this.syncPaletteSlider(
+				paletteEl,
 				selector,
 				`[data-freehand-value="${setting}"]`,
 				value,
 				(valueToFormat) => formatFreehandSliderValue(setting, valueToFormat),
 			);
 
-			const sliderEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(selector);
+			const sliderEl = paletteEl?.querySelector<HTMLInputElement>(selector);
 
 			if (sliderEl) {
 				sliderEl.disabled = !this.settings.beautifulStrokes;
@@ -920,13 +1061,14 @@ export class DrawingLayer {
 	}
 
 	private syncPaletteSlider(
+		paletteEl: HTMLElement | null,
 		sliderSelector: string,
 		valueSelector: string,
 		value: number,
 		formatValue: (value: number) => string,
 	): void {
-		const sliderEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(sliderSelector);
-		const valueEl = this.colorPaletteEl?.querySelector<HTMLElement>(valueSelector);
+		const sliderEl = paletteEl?.querySelector<HTMLInputElement>(sliderSelector);
+		const valueEl = paletteEl?.querySelector<HTMLElement>(valueSelector);
 
 		if (sliderEl) {
 			sliderEl.value = value.toString();
@@ -1090,9 +1232,9 @@ export class DrawingLayer {
 		return controlEl;
 	}
 
-	private createStrokeWidthControlEl(): HTMLElement {
+	private createStrokeSettingsControlEl(): HTMLElement {
 		const controlEl = document.createElement("div");
-		controlEl.classList.add("draw-in-canvas-stroke-width-control");
+		controlEl.classList.add("draw-in-canvas-stroke-settings-control");
 
 		const strokeSectionEl = document.createElement("div");
 		strokeSectionEl.classList.add("draw-in-canvas-palette-section");
@@ -1116,7 +1258,7 @@ export class DrawingLayer {
 		sliderEl.value = normalizeStrokeHardness(this.settings.strokeHardness).toString();
 		sliderEl.setAttribute("aria-label", "Stroke hardness");
 
-		this.colorPaletteDisposers.push(
+		this.strokeSettingsPaletteDisposers.push(
 			this.addListener(sliderEl, "keydown", this.handleStrokeWidthSliderKeyDown),
 			this.addListener(sliderEl, "input", this.handleStrokeHardnessSliderInput),
 		);
@@ -1175,7 +1317,7 @@ export class DrawingLayer {
 			sectionEl.appendChild(this.createFreehandSliderControlEl(setting));
 		}
 
-		this.colorPaletteDisposers.push(
+		this.strokeSettingsPaletteDisposers.push(
 			this.addListener(toggleEl, "change", this.handleHandwritingToggleChange),
 			this.addListener(resetButtonEl, "click", this.handleFreehandResetClick),
 		);
@@ -1206,7 +1348,7 @@ export class DrawingLayer {
 		sliderEl.setAttribute("aria-label", slider.ariaLabel);
 		sliderEl.disabled = !this.settings.beautifulStrokes;
 
-		this.colorPaletteDisposers.push(
+		this.strokeSettingsPaletteDisposers.push(
 			this.addListener(sliderEl, "input", this.handleFreehandSliderInput),
 		);
 
@@ -1232,7 +1374,6 @@ export class DrawingLayer {
 
 		this.settings = {...this.settings, strokeWidth};
 		this.requestSetStrokeWidth(strokeWidth);
-		this.syncColorPaletteSelection();
 		this.syncBrushControls();
 	}
 
@@ -1245,7 +1386,7 @@ export class DrawingLayer {
 
 		this.settings = {...this.settings, strokeHardness};
 		this.requestSetStrokeHardness(strokeHardness);
-		this.syncColorPaletteSelection();
+		this.syncStrokeSettingsPaletteControls();
 	}
 
 	private setStrokeOpacity(opacity: number): void {
@@ -1257,7 +1398,6 @@ export class DrawingLayer {
 
 		this.settings = {...this.settings, strokeOpacity};
 		this.requestSetStrokeOpacity(strokeOpacity);
-		this.syncColorPaletteSelection();
 		this.syncBrushControls();
 	}
 
@@ -1270,7 +1410,7 @@ export class DrawingLayer {
 
 		this.requestSetFreehandSliderValue(setting, nextValue);
 		this.settings = {...this.settings, [setting]: nextValue};
-		this.syncColorPaletteSelection();
+		this.syncStrokeSettingsPaletteControls();
 	}
 
 	private resetFreehandSliderValues(): void {
@@ -1288,7 +1428,7 @@ export class DrawingLayer {
 		}
 
 		this.settings = nextSettings;
-		this.syncColorPaletteSelection();
+		this.syncStrokeSettingsPaletteControls();
 	}
 
 	private setBeautifulStrokes(enabled: boolean): void {
@@ -1298,7 +1438,7 @@ export class DrawingLayer {
 
 		this.settings = {...this.settings, beautifulStrokes: enabled};
 		this.requestSetBeautifulStrokes(enabled);
-		this.syncColorPaletteSelection();
+		this.syncStrokeSettingsPaletteControls();
 	}
 
 	private openBrushPreview(event: PointerEvent, triggerEl: HTMLElement, setting: BrushSliderSetting): void {
@@ -2101,7 +2241,7 @@ export class DrawingLayer {
 	};
 
 	private enableSelectMode(): void {
-		this.closeColorPalette();
+		this.closeBrushPopovers();
 		this.clearToolbarPressState();
 
 		if (this.isDrawingEnabled()) {
@@ -2117,7 +2257,7 @@ export class DrawingLayer {
 			return false;
 		}
 
-		if (event.target instanceof Node && (this.colorPaletteEl?.contains(event.target) || this.brushControlsEl?.contains(event.target))) {
+		if (event.target instanceof Node && (this.colorPaletteEl?.contains(event.target) || this.strokeSettingsPaletteEl?.contains(event.target) || this.brushControlsEl?.contains(event.target))) {
 			return false;
 		}
 
@@ -2165,7 +2305,7 @@ export class DrawingLayer {
 		this.clearToolbarPressState();
 
 		if (shouldToggleDrawingMode) {
-			this.closeColorPalette();
+			this.closeBrushPopovers();
 			this.requestToggleDrawingMode();
 		}
 	};
@@ -2197,7 +2337,7 @@ export class DrawingLayer {
 
 		event.preventDefault();
 		event.stopPropagation();
-		this.closeColorPalette();
+		this.closeBrushPopovers();
 		this.requestToggleDrawingMode();
 	};
 
@@ -2411,6 +2551,12 @@ export class DrawingLayer {
 		this.openColorPalette();
 	};
 
+	private readonly handleBrushSettingsButtonClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+		this.openStrokeSettingsPalette();
+	};
+
 	private updateBrushSliderFromPointer(sliderEl: HTMLElement, event: PointerEvent): void {
 		const setting = getBrushSliderSetting(sliderEl.dataset.brushSlider);
 
@@ -2534,14 +2680,14 @@ export class DrawingLayer {
 		this.closeBrushPreview();
 	};
 
-	private readonly handleColorPaletteDocumentPointerDown = (event: PointerEvent): void => {
+	private readonly handleBrushPopoverDocumentPointerDown = (event: PointerEvent): void => {
 		const target = event.target;
 
-		if (target instanceof Node && (this.toolbarGroupEl?.contains(target) || this.colorPaletteEl?.contains(target) || this.brushControlsEl?.contains(target))) {
+		if (target instanceof Node && (this.toolbarGroupEl?.contains(target) || this.colorPaletteEl?.contains(target) || this.strokeSettingsPaletteEl?.contains(target) || this.brushControlsEl?.contains(target))) {
 			return;
 		}
 
-		this.closeColorPalette();
+		this.closeBrushPopovers();
 	};
 
 	private readonly handleColorPaletteDocumentKeyDown = (event: KeyboardEvent): void => {
@@ -2553,6 +2699,18 @@ export class DrawingLayer {
 		event.stopPropagation();
 		const focusTargetEl = this.colorPaletteTriggerEl ?? this.brushColorButtonEl ?? this.toolbarButtonEl;
 		this.closeColorPalette();
+		focusTargetEl?.focus({preventScroll: true});
+	};
+
+	private readonly handleStrokeSettingsPaletteDocumentKeyDown = (event: KeyboardEvent): void => {
+		if (event.key !== "Escape") {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		const focusTargetEl = this.strokeSettingsPaletteTriggerEl ?? this.brushSettingsButtonEl;
+		this.closeStrokeSettingsPalette();
 		focusTargetEl?.focus({preventScroll: true});
 	};
 
@@ -3670,6 +3828,10 @@ export class DrawingLayer {
 
 		if (this.colorPaletteEl) {
 			ownedElements.add(this.colorPaletteEl);
+		}
+
+		if (this.strokeSettingsPaletteEl) {
+			ownedElements.add(this.strokeSettingsPaletteEl);
 		}
 
 		if (this.brushControlsEl) {

@@ -122,12 +122,12 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	left: max(4px, env(safe-area-inset-left));
 	z-index: 1001;
 	display: grid;
-	grid-template-rows: minmax(72px, 1fr) 28px minmax(72px, 1fr);
+	grid-template-rows: minmax(64px, 1fr) 28px 28px minmax(64px, 1fr);
 	justify-items: center;
 	align-items: center;
 	box-sizing: border-box;
 	width: 44px;
-	height: min(280px, calc(100vh - 120px));
+	height: min(320px, calc(100vh - 120px));
 	max-height: calc(100% - 32px);
 	gap: 8px;
 	padding: 6px 4px;
@@ -198,7 +198,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	outline: none;
 }
 
-.draw-in-canvas-brush-color-button {
+.draw-in-canvas-brush-color-button,
+.draw-in-canvas-brush-settings-button {
 	display: grid;
 	place-items: center;
 	box-sizing: border-box;
@@ -225,17 +226,25 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .draw-in-canvas-brush-color-button:hover,
-.draw-in-canvas-brush-color-button:focus-visible {
+.draw-in-canvas-brush-color-button:focus-visible,
+.draw-in-canvas-brush-settings-button:hover,
+.draw-in-canvas-brush-settings-button:focus-visible {
 	border-color: var(--draw-in-canvas-brush-control-border-hover);
 	background: var(--interactive-hover);
 	outline: none;
 }
 
+.draw-in-canvas-brush-settings-button svg {
+	width: 16px;
+	height: 16px;
+	stroke-width: 2;
+}
+
 @media (max-height: 420px) {
 	.draw-in-canvas-brush-controls {
-		grid-template-rows: minmax(60px, 1fr) 26px minmax(60px, 1fr);
+		grid-template-rows: minmax(52px, 1fr) 26px 26px minmax(52px, 1fr);
 		width: 40px;
-		height: min(224px, calc(100vh - 88px));
+		height: min(260px, calc(100vh - 88px));
 		gap: 6px;
 		padding: 5px 3px;
 	}
@@ -250,12 +259,11 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	}
 }
 
-.draw-in-canvas-color-palette {
+.draw-in-canvas-color-palette,
+.draw-in-canvas-stroke-settings-palette {
 	position: fixed;
 	z-index: var(--layer-popover, 30);
 	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
-	place-items: center;
 	box-sizing: border-box;
 	width: 260px;
 	gap: 10px;
@@ -264,6 +272,11 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	border-radius: var(--radius-m);
 	background: var(--background-primary);
 	box-shadow: var(--shadow-s);
+}
+
+.draw-in-canvas-color-palette {
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	place-items: center;
 }
 
 .draw-in-canvas-color-swatch {
@@ -391,14 +404,10 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	box-shadow: 0 0 0 2px var(--background-primary), 0 0 0 4px var(--interactive-accent);
 }
 
-.draw-in-canvas-stroke-width-control {
-	grid-column: 1 / -1;
+.draw-in-canvas-stroke-settings-control {
 	display: grid;
 	gap: 12px;
 	width: 100%;
-	margin-top: 2px;
-	padding-top: 12px;
-	border-top: 1px solid var(--background-modifier-border);
 }
 
 .draw-in-canvas-palette-section {
@@ -533,7 +542,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	cursor: pointer;
 }
 
-.draw-in-canvas-color-palette input.draw-in-canvas-stroke-width-slider[type="range"] {
+.draw-in-canvas-stroke-settings-palette input.draw-in-canvas-stroke-width-slider[type="range"] {
 	width: 100%;
 }
 
