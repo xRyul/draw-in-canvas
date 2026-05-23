@@ -59,6 +59,16 @@ const PRESET_STROKE_COLORS = [
 ] as const;
 const DEFAULT_CUSTOM_COLOR = "#8b5cf6";
 const CUSTOM_COLOR_SHADE_COUNT = 6;
+const COLOR_PALETTE_TABS = [
+	{id: "disc", label: "Disc"},
+	{id: "palettes", label: "Palettes"},
+] as const;
+const COLOR_WHEEL_HUE_RING_RADIUS_PERCENT = 40.25;
+const COLOR_WHEEL_HUE_KEYBOARD_STEP = 2;
+const COLOR_WHEEL_HUE_KEYBOARD_LARGE_STEP = 15;
+const COLOR_WHEEL_KEYBOARD_STEP = 0.02;
+const COLOR_WHEEL_KEYBOARD_LARGE_STEP = 0.1;
+const COLOR_WHEEL_DISC_THUMB_SIZE_PX = 20;
 const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const BRUSH_POPOVER_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
@@ -76,8 +86,16 @@ interface RgbColor {
 	b: number;
 }
 
+interface HsvColor {
+	h: number;
+	s: number;
+	v: number;
+}
+
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 type BrushSliderSetting = "size" | "opacity";
+type ColorPaletteTab = typeof COLOR_PALETTE_TABS[number]["id"];
+type ColorWheelControl = "hue" | "disc";
 type CanvasPointMapper = (event: PointerEvent) => StrokePoint;
 
 interface StrokeRenderOptions {
@@ -193,6 +211,8 @@ export class DrawingLayer {
 	private colorPaletteTriggerEl: HTMLElement | null = null;
 	private strokeSettingsPaletteTriggerEl: HTMLElement | null = null;
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
+	private colorPaletteTab: ColorPaletteTab = "disc";
+	private colorWheelHsv = getColorWheelHsv(DEFAULT_CUSTOM_COLOR);
 	private shouldSelectCustomColorHexOnClick = false;
 	private toolbarPressState: ToolbarPressState | null = null;
 	private brushPreviewEl: HTMLElement | null = null;
@@ -255,6 +275,7 @@ export class DrawingLayer {
 		this.target = target;
 		this.settings = {...settings};
 		this.customColorHex = normalizeHexColor(settings.strokeColor) ?? DEFAULT_CUSTOM_COLOR;
+		this.colorWheelHsv = getColorWheelHsv(this.customColorHex, this.colorWheelHsv.h);
 		this.requestToggleDrawingMode = requestToggleDrawingMode;
 		this.requestSetStrokeColor = requestSetStrokeColor;
 		this.requestSetStrokeWidth = requestSetStrokeWidth;
@@ -763,8 +784,9 @@ export class DrawingLayer {
 		this.colorPaletteTriggerEl = triggerEl;
 
 		if (this.colorPaletteEl?.isConnected) {
-			this.positionColorPalette();
 			this.syncColorPaletteSelection();
+			this.syncColorPaletteTabControls();
+			this.positionColorPalette();
 			this.syncColorPaletteExpandedState();
 			this.syncPopoverOpenBodyClass();
 			return;
@@ -784,46 +806,44 @@ export class DrawingLayer {
 		paletteEl.setAttribute("aria-labelledby", paletteLabelEl.id);
 		paletteEl.appendChild(paletteLabelEl);
 
+		const panelIds: Record<ColorPaletteTab, string> = {
+			disc: createStrokeId(),
+			palettes: createStrokeId(),
+		};
 		const swatchEls: HTMLButtonElement[] = [];
+		const panelsEl = document.createElement("div");
+		panelsEl.classList.add("draw-in-canvas-color-palette-panels");
+		panelsEl.append(
+			this.createColorDiscPanelEl(panelIds.disc),
+			this.createPresetPalettePanelEl(panelIds.palettes, swatchEls),
+		);
 
-		for (const color of PRESET_STROKE_COLORS) {
-			const swatchEl = document.createElement("button");
-			swatchEl.type = "button";
-			swatchEl.classList.add("draw-in-canvas-color-swatch", "draw-in-canvas-preset-color-swatch");
-			swatchEl.dataset.color = color.value;
-			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
-			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
-			swatchEl.setCssStyles({backgroundColor: color.value});
-
-			this.colorPaletteDisposers.push(
-				this.addListener(swatchEl, "pointerdown", this.handleColorSwatchPointerDown),
-				this.addListener(swatchEl, "click", (event: MouseEvent) => {
-					event.preventDefault();
-					event.stopPropagation();
-					this.setStrokeColor(color.value);
-				}),
-			);
-
-			paletteEl.appendChild(swatchEl);
-			swatchEls.push(swatchEl);
-		}
-
-		paletteEl.appendChild(this.createNativeColorPickerEl());
-		paletteEl.appendChild(this.createCustomColorControlEl());
+		paletteEl.append(
+			this.createColorPaletteHeaderEl(),
+			panelsEl,
+			this.createColorPaletteTabsEl(panelIds),
+		);
 
 		document.body.appendChild(paletteEl);
 		this.colorPaletteEl = paletteEl;
 		this.syncPopoverOpenBodyClass();
-		this.positionColorPalette();
 		this.syncColorPaletteExpandedState();
 		this.colorPaletteDisposers.push(
 			this.addListener(document, "pointerdown", this.handleBrushPopoverDocumentPointerDown, true),
 			this.addListener(document, "keydown", this.handleColorPaletteDocumentKeyDown, true),
 		);
 		this.syncColorPaletteSelection();
+		this.syncColorPaletteTabControls();
+		this.positionColorPalette();
 
 		const selectedSwatchEl = swatchEls.find((swatchEl) => colorsMatch(swatchEl.dataset.color ?? "", this.settings.strokeColor));
-		window.requestAnimationFrame(() => (selectedSwatchEl ?? swatchEls[0])?.focus({preventScroll: true}));
+		const focusEl = this.colorPaletteTab === "palettes"
+			? selectedSwatchEl ?? swatchEls[0]
+			: paletteEl.querySelector<HTMLElement>(".draw-in-canvas-color-wheel-disc-field")
+				?? paletteEl.querySelector<HTMLElement>(".draw-in-canvas-color-palette-tab.is-active")
+				?? selectedSwatchEl
+				?? swatchEls[0];
+		window.requestAnimationFrame(() => focusEl?.focus({preventScroll: true}));
 	}
 
 	private getColorPaletteTriggerEl(): HTMLElement | null {
@@ -1018,6 +1038,8 @@ export class DrawingLayer {
 		}
 
 		this.syncCustomColorControls();
+		this.syncColorWheelControls();
+		this.syncColorPaletteHeader();
 	}
 
 	private syncStrokeSettingsPaletteControls(): void {
@@ -1120,29 +1142,294 @@ export class DrawingLayer {
 		}
 	}
 
+	private syncColorWheelControls(): void {
+		const wheelEl = this.colorPaletteEl?.querySelector<HTMLElement>(".draw-in-canvas-color-disc-picker");
+
+		if (!wheelEl) {
+			return;
+		}
+
+		const hueColor = hsvToHex({h: this.colorWheelHsv.h, s: 1, v: 1});
+		const selectedColor = normalizeHexColor(this.customColorHex) ?? hsvToHex(this.colorWheelHsv);
+		const huePosition = getColorWheelHuePosition(this.colorWheelHsv.h);
+		const hueValue = Math.round(this.colorWheelHsv.h);
+		const saturationValue = Math.round(this.colorWheelHsv.s * 100);
+		const brightnessValue = Math.round(this.colorWheelHsv.v * 100);
+		const hueControlEl = wheelEl.querySelector<HTMLElement>("[data-color-wheel-control=\"hue\"]");
+		const discControlEl = wheelEl.querySelector<HTMLElement>("[data-color-wheel-control=\"disc\"]");
+		const discThumbPosition = getColorWheelDiscThumbPosition(this.colorWheelHsv, discControlEl);
+
+		wheelEl.setCssProps({
+			"--draw-in-canvas-color-wheel-hue-color": hueColor,
+			"--draw-in-canvas-color-wheel-selected-color": selectedColor,
+			"--draw-in-canvas-color-wheel-hue-x": `${huePosition.x}%`,
+			"--draw-in-canvas-color-wheel-hue-y": `${huePosition.y}%`,
+			"--draw-in-canvas-color-wheel-disc-x": `${discThumbPosition.x}%`,
+			"--draw-in-canvas-color-wheel-disc-y": `${discThumbPosition.y}%`,
+		});
+
+		if (hueControlEl) {
+			hueControlEl.setAttribute("aria-valuenow", hueValue.toString());
+			hueControlEl.setAttribute("aria-valuetext", `${hueValue}° hue`);
+		}
+
+		if (discControlEl) {
+			discControlEl.setAttribute("aria-valuenow", saturationValue.toString());
+			discControlEl.setAttribute("aria-valuetext", `Saturation ${saturationValue}%, brightness ${brightnessValue}%`);
+		}
+	}
+
+	private syncColorPaletteHeader(): void {
+		const previewEls = this.colorPaletteEl?.querySelectorAll<HTMLElement>(".draw-in-canvas-current-color-preview") ?? [];
+		const labelEls = this.colorPaletteEl?.querySelectorAll<HTMLElement>(".draw-in-canvas-current-color-label") ?? [];
+		const colorLabel = normalizeHexColor(this.settings.strokeColor)?.toUpperCase() ?? this.settings.strokeColor;
+
+		for (const previewEl of Array.from(previewEls)) {
+			previewEl.setCssProps({"--draw-in-canvas-current-color": this.settings.strokeColor});
+		}
+
+		for (const labelEl of Array.from(labelEls)) {
+			labelEl.textContent = colorLabel;
+		}
+	}
+
+	private syncColorPaletteTabControls(): void {
+		const paletteEl = this.colorPaletteEl;
+
+		if (!paletteEl) {
+			return;
+		}
+
+		const tabEls = paletteEl.querySelectorAll<HTMLElement>(".draw-in-canvas-color-palette-tab");
+		const panelEls = paletteEl.querySelectorAll<HTMLElement>(".draw-in-canvas-color-palette-panel");
+
+		for (const tabEl of Array.from(tabEls)) {
+			const tab = getColorPaletteTab(tabEl.dataset.colorPaletteTab);
+			const isSelected = tab === this.colorPaletteTab;
+			tabEl.classList.toggle("is-active", isSelected);
+			tabEl.tabIndex = isSelected ? 0 : -1;
+			tabEl.setAttribute("aria-selected", isSelected.toString());
+		}
+
+		for (const panelEl of Array.from(panelEls)) {
+			const tab = getColorPaletteTab(panelEl.dataset.colorPalettePanel);
+			const isSelected = tab === this.colorPaletteTab;
+			panelEl.hidden = !isSelected;
+			panelEl.classList.toggle("is-active", isSelected);
+			panelEl.setAttribute("aria-hidden", (!isSelected).toString());
+		}
+	}
+
 	private updateCustomColorFromStrokeColor(): void {
 		const strokeColorHex = normalizeHexColor(this.settings.strokeColor);
 
 		if (strokeColorHex) {
 			this.customColorHex = strokeColorHex;
+			this.colorWheelHsv = getColorWheelHsv(strokeColorHex, this.colorWheelHsv.h);
 		}
 	}
 
-	private setStrokeColor(color: string): void {
-		if (colorsMatch(color, this.settings.strokeColor)) {
-			return;
-		}
+	private setColorWheelHsv(color: HsvColor): void {
+		const nextColor = normalizeHsvColor(color);
+		const hexColor = hsvToHex(nextColor);
 
+		this.colorWheelHsv = nextColor;
+		this.customColorHex = hexColor;
+		this.setStrokeColor(hexColor);
+		this.syncColorWheelControls();
+		this.syncColorPaletteHeader();
+	}
+
+	private setStrokeColor(color: string): void {
 		const hexColor = normalizeHexColor(color);
 
 		if (hexColor) {
 			this.customColorHex = hexColor;
+			this.colorWheelHsv = getColorWheelHsv(hexColor, this.colorWheelHsv.h);
 		}
+
+		if (colorsMatch(color, this.settings.strokeColor)) {
+			this.syncColorWheelControls();
+			this.syncColorPaletteHeader();
+			return;
+		}
+
 		this.settings = {...this.settings, strokeColor: color};
 		this.requestSetStrokeColor(color);
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
 		this.syncBrushControls();
+	}
+
+	private createColorPaletteHeaderEl(): HTMLElement {
+		const headerEl = document.createElement("div");
+		headerEl.classList.add("draw-in-canvas-color-palette-header");
+
+		const titleEl = document.createElement("div");
+		titleEl.classList.add("draw-in-canvas-color-palette-title");
+		titleEl.textContent = "Colors";
+
+		const currentColorEl = document.createElement("div");
+		currentColorEl.classList.add("draw-in-canvas-current-color");
+		currentColorEl.setAttribute("aria-label", "Current stroke color");
+
+		const previewEl = document.createElement("span");
+		previewEl.classList.add("draw-in-canvas-current-color-preview");
+		previewEl.setCssProps({"--draw-in-canvas-current-color": this.settings.strokeColor});
+
+		const labelEl = document.createElement("span");
+		labelEl.classList.add("draw-in-canvas-current-color-label");
+		labelEl.textContent = normalizeHexColor(this.settings.strokeColor)?.toUpperCase() ?? this.settings.strokeColor;
+
+		currentColorEl.append(previewEl, labelEl);
+		headerEl.append(titleEl, currentColorEl);
+		return headerEl;
+	}
+
+	private createColorDiscPanelEl(panelId: string): HTMLElement {
+		const panelEl = document.createElement("div");
+		panelEl.id = panelId;
+		panelEl.classList.add("draw-in-canvas-color-palette-panel", "draw-in-canvas-color-disc-panel");
+		panelEl.dataset.colorPalettePanel = "disc";
+		panelEl.setAttribute("role", "tabpanel");
+
+		const wheelEl = document.createElement("div");
+		wheelEl.classList.add("draw-in-canvas-color-disc-picker");
+		wheelEl.setAttribute("aria-label", "Color disc");
+
+		const hueControlEl = document.createElement("div");
+		hueControlEl.classList.add("draw-in-canvas-color-wheel-hue-control");
+		hueControlEl.dataset.colorWheelControl = "hue";
+		hueControlEl.tabIndex = 0;
+		hueControlEl.setAttribute("role", "slider");
+		hueControlEl.setAttribute("aria-label", "Stroke color hue");
+		hueControlEl.setAttribute("aria-valuemin", "0");
+		hueControlEl.setAttribute("aria-valuemax", "360");
+
+		const hueThumbEl = document.createElement("span");
+		hueThumbEl.classList.add("draw-in-canvas-color-wheel-thumb", "draw-in-canvas-color-wheel-hue-thumb");
+		hueThumbEl.setAttribute("aria-hidden", "true");
+		hueControlEl.appendChild(hueThumbEl);
+
+		const discControlEl = document.createElement("div");
+		discControlEl.classList.add("draw-in-canvas-color-wheel-disc-field");
+		discControlEl.dataset.colorWheelControl = "disc";
+		discControlEl.tabIndex = 0;
+		discControlEl.setAttribute("role", "slider");
+		discControlEl.setAttribute("aria-label", "Stroke color saturation and brightness");
+		discControlEl.setAttribute("aria-valuemin", "0");
+		discControlEl.setAttribute("aria-valuemax", "100");
+
+		const discThumbEl = document.createElement("span");
+		discThumbEl.classList.add("draw-in-canvas-color-wheel-thumb", "draw-in-canvas-color-wheel-disc-thumb");
+		discThumbEl.setAttribute("aria-hidden", "true");
+		discControlEl.appendChild(discThumbEl);
+
+		for (const controlEl of [hueControlEl, discControlEl]) {
+			this.colorPaletteDisposers.push(
+				this.addListener(controlEl, "pointerdown", this.handleColorWheelPointerDown),
+				this.addListener(controlEl, "pointermove", this.handleColorWheelPointerMove),
+				this.addListener(controlEl, "pointerup", this.handleColorWheelPointerUp),
+				this.addListener(controlEl, "pointercancel", this.handleColorWheelPointerUp),
+				this.addListener(controlEl, "keydown", this.handleColorWheelKeyDown),
+			);
+		}
+
+		wheelEl.append(hueControlEl, discControlEl);
+		panelEl.append(wheelEl, this.createColorDiscPaletteEl());
+		return panelEl;
+	}
+
+	private createColorDiscPaletteEl(): HTMLElement {
+		const paletteEl = document.createElement("div");
+		paletteEl.classList.add("draw-in-canvas-color-disc-palette");
+
+		const titleEl = document.createElement("div");
+		titleEl.classList.add("draw-in-canvas-color-disc-palette-title");
+		titleEl.textContent = "Palette";
+
+		const swatchesEl = document.createElement("div");
+		swatchesEl.classList.add("draw-in-canvas-color-disc-palette-swatches");
+		swatchesEl.setAttribute("aria-label", "Preset stroke colors");
+
+		for (const color of PRESET_STROKE_COLORS) {
+			const swatchEl = document.createElement("button");
+			swatchEl.type = "button";
+			swatchEl.classList.add("draw-in-canvas-color-disc-palette-swatch", "draw-in-canvas-preset-color-swatch");
+			swatchEl.dataset.color = color.value;
+			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
+			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
+			swatchEl.setCssStyles({backgroundColor: color.value});
+
+			this.colorPaletteDisposers.push(
+				this.addListener(swatchEl, "pointerdown", this.handleColorSwatchPointerDown),
+				this.addListener(swatchEl, "click", this.handlePresetColorSwatchClick),
+			);
+
+			swatchesEl.appendChild(swatchEl);
+		}
+
+		paletteEl.append(titleEl, swatchesEl);
+		return paletteEl;
+	}
+
+	private createPresetPalettePanelEl(panelId: string, swatchEls: HTMLButtonElement[]): HTMLElement {
+		const panelEl = document.createElement("div");
+		panelEl.id = panelId;
+		panelEl.classList.add("draw-in-canvas-color-palette-panel", "draw-in-canvas-presets-panel");
+		panelEl.dataset.colorPalettePanel = "palettes";
+		panelEl.setAttribute("role", "tabpanel");
+
+		const swatchesEl = document.createElement("div");
+		swatchesEl.classList.add("draw-in-canvas-color-palette-swatch-grid");
+		swatchesEl.setAttribute("aria-label", "Preset stroke colors");
+
+		for (const color of PRESET_STROKE_COLORS) {
+			const swatchEl = document.createElement("button");
+			swatchEl.type = "button";
+			swatchEl.classList.add("draw-in-canvas-color-swatch", "draw-in-canvas-preset-color-swatch");
+			swatchEl.dataset.color = color.value;
+			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
+			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
+			swatchEl.setCssStyles({backgroundColor: color.value});
+
+			this.colorPaletteDisposers.push(
+				this.addListener(swatchEl, "pointerdown", this.handleColorSwatchPointerDown),
+				this.addListener(swatchEl, "click", this.handlePresetColorSwatchClick),
+			);
+
+			swatchesEl.appendChild(swatchEl);
+			swatchEls.push(swatchEl);
+		}
+
+		panelEl.append(swatchesEl, this.createNativeColorPickerEl(), this.createCustomColorControlEl());
+		return panelEl;
+	}
+
+	private createColorPaletteTabsEl(panelIds: Record<ColorPaletteTab, string>): HTMLElement {
+		const tabsEl = document.createElement("div");
+		tabsEl.classList.add("draw-in-canvas-color-palette-tabs");
+		tabsEl.setAttribute("role", "tablist");
+		tabsEl.setAttribute("aria-label", "Color picker views");
+
+		for (const tab of COLOR_PALETTE_TABS) {
+			const tabEl = document.createElement("button");
+			tabEl.type = "button";
+			tabEl.classList.add("draw-in-canvas-color-palette-tab");
+			tabEl.dataset.colorPaletteTab = tab.id;
+			tabEl.setAttribute("role", "tab");
+			tabEl.setAttribute("aria-controls", panelIds[tab.id]);
+			tabEl.textContent = tab.label;
+
+			this.colorPaletteDisposers.push(
+				this.addListener(tabEl, "click", this.handleColorPaletteTabClick),
+				this.addListener(tabEl, "keydown", this.handleColorPaletteTabKeyDown),
+			);
+
+			tabsEl.appendChild(tabEl);
+		}
+
+		return tabsEl;
 	}
 
 	private createNativeColorPickerEl(): HTMLElement {
@@ -2345,6 +2632,141 @@ export class DrawingLayer {
 		event.preventDefault();
 		event.stopPropagation();
 	};
+
+	private readonly handlePresetColorSwatchClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		const color = event.currentTarget.dataset.color;
+
+		if (!color) {
+			return;
+		}
+
+		this.setStrokeColor(color);
+	};
+
+	private readonly handleColorPaletteTabClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		const tab = getColorPaletteTab(event.currentTarget.dataset.colorPaletteTab);
+
+		if (!tab) {
+			return;
+		}
+
+		this.colorPaletteTab = tab;
+		this.syncColorPaletteTabControls();
+		this.positionColorPalette();
+	};
+
+	private readonly handleColorPaletteTabKeyDown = (event: KeyboardEvent): void => {
+		if (!(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		const currentTab = getColorPaletteTab(event.currentTarget.dataset.colorPaletteTab);
+
+		if (!currentTab) {
+			return;
+		}
+
+		const nextTab = getColorPaletteTabFromKey(currentTab, event);
+
+		if (!nextTab) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.colorPaletteTab = nextTab;
+		this.syncColorPaletteTabControls();
+		this.positionColorPalette();
+		this.colorPaletteEl
+			?.querySelector<HTMLElement>(`[data-color-palette-tab="${nextTab}"]`)
+			?.focus({preventScroll: true});
+	};
+
+	private readonly handleColorWheelPointerDown = (event: PointerEvent): void => {
+		if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		const control = getColorWheelControl(event.currentTarget.dataset.colorWheelControl);
+
+		if (!control) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		event.currentTarget.focus({preventScroll: true});
+		trySetPointerCapture(event.currentTarget, event.pointerId);
+		this.updateColorWheelFromPointer(event.currentTarget, event, control);
+	};
+
+	private readonly handleColorWheelPointerMove = (event: PointerEvent): void => {
+		if (!(event.currentTarget instanceof HTMLElement) || !event.currentTarget.hasPointerCapture(event.pointerId)) {
+			return;
+		}
+
+		const control = getColorWheelControl(event.currentTarget.dataset.colorWheelControl);
+
+		if (!control) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.updateColorWheelFromPointer(event.currentTarget, event, control);
+	};
+
+	private readonly handleColorWheelPointerUp = (event: PointerEvent): void => {
+		if (!(event.currentTarget instanceof HTMLElement) || !event.currentTarget.hasPointerCapture(event.pointerId)) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+	};
+
+	private readonly handleColorWheelKeyDown = (event: KeyboardEvent): void => {
+		if (!(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		const control = getColorWheelControl(event.currentTarget.dataset.colorWheelControl);
+		const nextColor = control === "hue"
+			? getColorWheelHueKeyboardColor(this.colorWheelHsv, event)
+			: control === "disc"
+				? getColorWheelDiscKeyboardColor(this.colorWheelHsv, event)
+				: null;
+
+		if (!nextColor) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.setColorWheelHsv(nextColor);
+	};
+
+	private updateColorWheelFromPointer(controlEl: HTMLElement, event: PointerEvent, control: ColorWheelControl): void {
+		const nextColor = control === "hue"
+			? {...this.colorWheelHsv, h: getColorWheelHueFromPointer(controlEl, event.clientX, event.clientY)}
+			: {...this.colorWheelHsv, ...getColorWheelDiscValuesFromPointer(controlEl, event.clientX, event.clientY)};
+
+		this.setColorWheelHsv(nextColor);
+	}
 
 	private readonly handleNativeColorPickerInput = (event: Event): void => {
 		event.stopPropagation();
@@ -4077,6 +4499,192 @@ function isActivationKey(event: KeyboardEvent): boolean {
 	return event.key === "Enter" || event.key === " ";
 }
 
+function getColorPaletteTab(value: string | undefined): ColorPaletteTab | null {
+	return COLOR_PALETTE_TABS.some((tab) => tab.id === value) ? value as ColorPaletteTab : null;
+}
+
+function getColorPaletteTabFromKey(currentTab: ColorPaletteTab, event: KeyboardEvent): ColorPaletteTab | null {
+	const currentIndex = COLOR_PALETTE_TABS.findIndex((tab) => tab.id === currentTab);
+
+	if (currentIndex === -1) {
+		return null;
+	}
+
+	switch (event.key) {
+		case "ArrowRight":
+		case "ArrowDown":
+			return COLOR_PALETTE_TABS[(currentIndex + 1) % COLOR_PALETTE_TABS.length]?.id ?? currentTab;
+
+		case "ArrowLeft":
+		case "ArrowUp":
+			return COLOR_PALETTE_TABS[(currentIndex - 1 + COLOR_PALETTE_TABS.length) % COLOR_PALETTE_TABS.length]?.id ?? currentTab;
+
+		case "Home":
+			return COLOR_PALETTE_TABS[0]?.id ?? currentTab;
+
+		case "End":
+			return COLOR_PALETTE_TABS[COLOR_PALETTE_TABS.length - 1]?.id ?? currentTab;
+
+		default:
+			return null;
+	}
+}
+
+function getColorWheelControl(value: string | undefined): ColorWheelControl | null {
+	return value === "hue" || value === "disc" ? value : null;
+}
+
+function getColorWheelHueFromPointer(element: HTMLElement, clientX: number, clientY: number): number {
+	const rect = element.getBoundingClientRect();
+	const x = clientX - (rect.left + rect.width / 2);
+	const y = clientY - (rect.top + rect.height / 2);
+	return normalizeHue(Math.atan2(y, x) * 180 / Math.PI);
+}
+
+function getColorWheelDiscValuesFromPointer(element: HTMLElement, clientX: number, clientY: number): Pick<HsvColor, "s" | "v"> {
+	const rect = element.getBoundingClientRect();
+	const point = constrainColorWheelDiscPoint({
+		x: clampUnit((clientX - rect.left) / rect.width),
+		y: clampUnit((clientY - rect.top) / rect.height),
+	}, getColorWheelDiscThumbRadiusRatio(element));
+
+	return {
+		s: point.x,
+		v: 1 - point.y,
+	};
+}
+
+function getColorWheelDiscThumbPosition(color: HsvColor, element: HTMLElement | null): {x: number; y: number} {
+	const point = constrainColorWheelDiscPoint({
+		x: color.s,
+		y: 1 - color.v,
+	}, getColorWheelDiscThumbRadiusRatio(element));
+
+	return {
+		x: point.x * 100,
+		y: point.y * 100,
+	};
+}
+
+function constrainColorWheelDiscPoint(point: {x: number; y: number}, thumbRadiusRatio: number): {x: number; y: number} {
+	const maxDistance = Math.max(0, 0.5 - thumbRadiusRatio);
+	const dx = point.x - 0.5;
+	const dy = point.y - 0.5;
+	const distance = Math.hypot(dx, dy);
+
+	if (distance <= maxDistance || distance === 0) {
+		return point;
+	}
+
+	const scale = maxDistance / distance;
+	return {
+		x: 0.5 + dx * scale,
+		y: 0.5 + dy * scale,
+	};
+}
+
+function getColorWheelDiscThumbRadiusRatio(element: HTMLElement | null): number {
+	const rect = element?.getBoundingClientRect();
+	const diameter = Math.min(rect?.width ?? 0, rect?.height ?? 0);
+
+	if (diameter <= 0) {
+		return 0;
+	}
+
+	return Math.min(0.5, COLOR_WHEEL_DISC_THUMB_SIZE_PX / 2 / diameter);
+}
+
+function getColorWheelHueKeyboardColor(color: HsvColor, event: KeyboardEvent): HsvColor | null {
+	const step = event.shiftKey ? COLOR_WHEEL_HUE_KEYBOARD_LARGE_STEP : COLOR_WHEEL_HUE_KEYBOARD_STEP;
+
+	switch (event.key) {
+		case "ArrowRight":
+		case "ArrowUp":
+			return {...color, h: normalizeHue(color.h + step)};
+
+		case "ArrowLeft":
+		case "ArrowDown":
+			return {...color, h: normalizeHue(color.h - step)};
+
+		case "PageUp":
+			return {...color, h: normalizeHue(color.h + COLOR_WHEEL_HUE_KEYBOARD_LARGE_STEP)};
+
+		case "PageDown":
+			return {...color, h: normalizeHue(color.h - COLOR_WHEEL_HUE_KEYBOARD_LARGE_STEP)};
+
+		case "Home":
+			return {...color, h: 0};
+
+		case "End":
+			return {...color, h: 359};
+
+		default:
+			return null;
+	}
+}
+
+function getColorWheelDiscKeyboardColor(color: HsvColor, event: KeyboardEvent): HsvColor | null {
+	const step = event.shiftKey ? COLOR_WHEEL_KEYBOARD_LARGE_STEP : COLOR_WHEEL_KEYBOARD_STEP;
+
+	switch (event.key) {
+		case "ArrowRight":
+			return {...color, s: clampUnit(color.s + step)};
+
+		case "ArrowLeft":
+			return {...color, s: clampUnit(color.s - step)};
+
+		case "ArrowUp":
+			return {...color, v: clampUnit(color.v + step)};
+
+		case "ArrowDown":
+			return {...color, v: clampUnit(color.v - step)};
+
+		case "PageUp":
+			return {...color, v: clampUnit(color.v + COLOR_WHEEL_KEYBOARD_LARGE_STEP)};
+
+		case "PageDown":
+			return {...color, v: clampUnit(color.v - COLOR_WHEEL_KEYBOARD_LARGE_STEP)};
+
+		case "Home":
+			return {...color, s: 0};
+
+		case "End":
+			return {...color, s: 1};
+
+		default:
+			return null;
+	}
+}
+
+function getColorWheelHuePosition(hue: number): {x: number; y: number} {
+	const angle = normalizeHue(hue) * Math.PI / 180;
+	return {
+		x: 50 + Math.cos(angle) * COLOR_WHEEL_HUE_RING_RADIUS_PERCENT,
+		y: 50 + Math.sin(angle) * COLOR_WHEEL_HUE_RING_RADIUS_PERCENT,
+	};
+}
+
+function getColorWheelHsv(hexColor: string, fallbackHue = 0): HsvColor {
+	const hsv = hexToHsv(hexColor);
+
+	if (!hsv) {
+		return {h: normalizeHue(fallbackHue), s: 0, v: 0};
+	}
+
+	return {
+		...hsv,
+		h: hsv.s === 0 ? normalizeHue(fallbackHue) : hsv.h,
+	};
+}
+
+function normalizeHsvColor(color: HsvColor): HsvColor {
+	return {
+		h: normalizeHue(color.h),
+		s: clampUnit(color.s),
+		v: clampUnit(color.v),
+	};
+}
+
 function colorsMatch(a: string, b: string): boolean {
 	const aHex = normalizeHexColor(a);
 	const bHex = normalizeHexColor(b);
@@ -4139,6 +4747,78 @@ function hexToRgb(hexColor: string): RgbColor | null {
 	};
 }
 
+function hexToHsv(hexColor: string): HsvColor | null {
+	const rgbColor = hexToRgb(hexColor);
+	return rgbColor ? rgbToHsv(rgbColor) : null;
+}
+
+function rgbToHsv(color: RgbColor): HsvColor {
+	const r = color.r / 255;
+	const g = color.g / 255;
+	const b = color.b / 255;
+	const max = Math.max(r, g, b);
+	const min = Math.min(r, g, b);
+	const delta = max - min;
+	let hue = 0;
+
+	if (delta > 0) {
+		if (max === r) {
+			hue = 60 * (((g - b) / delta) % 6);
+		} else if (max === g) {
+			hue = 60 * ((b - r) / delta + 2);
+		} else {
+			hue = 60 * ((r - g) / delta + 4);
+		}
+	}
+
+	return {
+		h: normalizeHue(hue),
+		s: max === 0 ? 0 : delta / max,
+		v: max,
+	};
+}
+
+function hsvToHex(color: HsvColor): string {
+	return rgbToHex(hsvToRgb(color));
+}
+
+function hsvToRgb(color: HsvColor): RgbColor {
+	const normalizedColor = normalizeHsvColor(color);
+	const hue = normalizedColor.h / 60;
+	const chroma = normalizedColor.v * normalizedColor.s;
+	const x = chroma * (1 - Math.abs(hue % 2 - 1));
+	const m = normalizedColor.v - chroma;
+	let r = 0;
+	let g = 0;
+	let b = 0;
+
+	if (hue < 1) {
+		r = chroma;
+		g = x;
+	} else if (hue < 2) {
+		r = x;
+		g = chroma;
+	} else if (hue < 3) {
+		g = chroma;
+		b = x;
+	} else if (hue < 4) {
+		g = x;
+		b = chroma;
+	} else if (hue < 5) {
+		r = x;
+		b = chroma;
+	} else {
+		r = chroma;
+		b = x;
+	}
+
+	return {
+		r: (r + m) * 255,
+		g: (g + m) * 255,
+		b: (b + m) * 255,
+	};
+}
+
 function mixRgb(from: RgbColor, to: RgbColor, amount: number): RgbColor {
 	return {
 		r: Math.round(from.r + (to.r - from.r) * amount),
@@ -4153,6 +4833,18 @@ function rgbToHex(color: RgbColor): string {
 
 function clampRgb(value: number): number {
 	return Math.min(255, Math.max(0, Math.round(value)));
+}
+
+function clampUnit(value: number): number {
+	return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+}
+
+function normalizeHue(value: number): number {
+	if (!Number.isFinite(value)) {
+		return 0;
+	}
+
+	return (value % 360 + 360) % 360;
 }
 
 function formatStrokeWidth(width: number): string {
