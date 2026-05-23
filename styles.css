@@ -41,7 +41,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	position: relative;
 }
 
-.draw-in-canvas-control-item::after {
+.draw-in-canvas-pencil-control-item::after {
 	content: "";
 	position: absolute;
 	right: 6px;
@@ -100,14 +100,6 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	place-items: center;
 	overflow: hidden;
 	color: var(--text-normal);
-}
-
-.draw-in-canvas-color-picker-swatch::before {
-	content: "";
-	position: absolute;
-	inset: 0;
-	background: linear-gradient(135deg, transparent 0 46%, rgb(255 255 255 / 0.7) 47% 53%, transparent 54%);
-	pointer-events: none;
 }
 
 .draw-in-canvas-native-color-picker {

@@ -166,6 +166,7 @@ export class DrawingLayer {
 	private strokeInteractionEl: HTMLElement | null = null;
 	private toolbarGroupEl: HTMLElement | null = null;
 	private toolbarButtonEl: HTMLElement | null = null;
+	private selectButtonEl: HTMLElement | null = null;
 	private colorPaletteEl: HTMLElement | null = null;
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
 	private shouldSelectCustomColorHexOnClick = false;
@@ -449,8 +450,17 @@ export class DrawingLayer {
 		const groupEl = document.createElement("div");
 		groupEl.classList.add("canvas-control-group", "mod-raised", "draw-in-canvas-control-group");
 
+		const selectButtonEl = document.createElement("div");
+		selectButtonEl.classList.add("canvas-control-item", "draw-in-canvas-control-item", "draw-in-canvas-select-control-item");
+		selectButtonEl.setAttribute("aria-label", "Select canvas items (1)");
+		selectButtonEl.setAttribute("data-tooltip-position", "left");
+		selectButtonEl.setAttribute("role", "button");
+		selectButtonEl.setAttribute("aria-keyshortcuts", "1");
+		selectButtonEl.tabIndex = 0;
+		setIcon(selectButtonEl, "mouse-pointer-2");
+
 		const buttonEl = document.createElement("div");
-		buttonEl.classList.add("canvas-control-item", "draw-in-canvas-control-item");
+		buttonEl.classList.add("canvas-control-item", "draw-in-canvas-control-item", "draw-in-canvas-pencil-control-item");
 		buttonEl.setAttribute("aria-label", "Toggle drawing mode. Long press or right click for stroke colors");
 		buttonEl.setAttribute("data-tooltip-position", "left");
 		buttonEl.setAttribute("role", "button");
@@ -459,12 +469,15 @@ export class DrawingLayer {
 		buttonEl.tabIndex = 0;
 		setIcon(buttonEl, "pencil");
 
-		groupEl.appendChild(buttonEl);
+		groupEl.append(selectButtonEl, buttonEl);
 		controlsEl.insertBefore(groupEl, getZoomControlGroup(controlsEl));
 
 		this.toolbarGroupEl = groupEl;
+		this.selectButtonEl = selectButtonEl;
 		this.toolbarButtonEl = buttonEl;
 		this.toolbarDisposers.push(
+			this.addListener(selectButtonEl, "pointerdown", this.handleSelectToolbarPointerDown),
+			this.addListener(selectButtonEl, "keydown", this.handleSelectToolbarKeyDown),
 			this.addListener(buttonEl, "pointerdown", this.handleToolbarPointerDown),
 			this.addListener(buttonEl, "pointerup", this.handleToolbarPointerUp),
 			this.addListener(buttonEl, "pointercancel", this.handleToolbarPointerCancel),
@@ -485,6 +498,7 @@ export class DrawingLayer {
 		this.toolbarGroupEl?.remove();
 		this.toolbarGroupEl = null;
 		this.toolbarButtonEl = null;
+		this.selectButtonEl = null;
 	}
 
 	private syncToolbarButton(): void {
@@ -493,6 +507,8 @@ export class DrawingLayer {
 		}
 
 		const isEnabled = this.isDrawingEnabled();
+		this.selectButtonEl?.classList.toggle("is-active", !isEnabled);
+		this.selectButtonEl?.setAttribute("aria-pressed", (!isEnabled).toString());
 		this.toolbarButtonEl.classList.toggle("is-active", isEnabled);
 		this.toolbarButtonEl.setAttribute("aria-pressed", isEnabled.toString());
 		this.toolbarButtonEl.setCssProps({"--draw-in-canvas-current-color": this.settings.strokeColor});
@@ -1523,6 +1539,13 @@ export class DrawingLayer {
 	}
 
 	private readonly handleKeyDown = (event: KeyboardEvent): void => {
+		if (this.shouldUseSelectToolShortcut(event)) {
+			event.preventDefault();
+			event.stopPropagation();
+			this.enableSelectMode();
+			return;
+		}
+
 		if (event.key !== "Escape") {
 			return;
 		}
@@ -1531,6 +1554,51 @@ export class DrawingLayer {
 		event.stopPropagation();
 		this.requestToggleDrawingMode();
 	};
+
+	private readonly handleSelectToolbarPointerDown = (event: PointerEvent): void => {
+		if (event.button !== 0 || !this.selectButtonEl) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.selectButtonEl.focus({preventScroll: true});
+		this.enableSelectMode();
+	};
+
+	private readonly handleSelectToolbarKeyDown = (event: KeyboardEvent): void => {
+		if (!isActivationKey(event)) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		this.enableSelectMode();
+	};
+
+	private enableSelectMode(): void {
+		this.closeColorPalette();
+		this.clearToolbarPressState();
+
+		if (this.isDrawingEnabled()) {
+			this.disableDrawingMode();
+			return;
+		}
+
+		this.syncToolbarButton();
+	}
+
+	private shouldUseSelectToolShortcut(event: KeyboardEvent): boolean {
+		if (!this.captureEl || !isSelectToolShortcutEvent(event) || isEditableEventTarget(event.target)) {
+			return false;
+		}
+
+		if (event.target instanceof Node && this.colorPaletteEl?.contains(event.target)) {
+			return false;
+		}
+
+		return this.app.workspace.getMostRecentLeaf() === this.target.leaf;
+	}
 
 	private readonly handleToolbarPointerDown = (event: PointerEvent): void => {
 		if (event.button !== 0 || !this.toolbarButtonEl) {
@@ -2281,6 +2349,13 @@ export class DrawingLayer {
 
 
 	private readonly handleDocumentKeyDown = (event: KeyboardEvent): void => {
+		if (this.shouldUseSelectToolShortcut(event)) {
+			event.preventDefault();
+			event.stopPropagation();
+			this.enableSelectMode();
+			return;
+		}
+
 		if (isSpaceKeyEvent(event) && !isEditableEventTarget(event.target)) {
 			this.isSpaceKeyPressed = true;
 			return;
@@ -3215,6 +3290,10 @@ function hasSelectionModifier(event: MouseEvent | PointerEvent): boolean {
 
 function isSpaceKeyEvent(event: KeyboardEvent): boolean {
 	return event.code === "Space" || event.key === " ";
+}
+
+function isSelectToolShortcutEvent(event: KeyboardEvent): boolean {
+	return event.key === "1" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
 
 function isEditableEventTarget(target: EventTarget | null): boolean {
