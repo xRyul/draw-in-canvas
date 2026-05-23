@@ -179,6 +179,12 @@ export default class DrawInCanvasPlugin extends Plugin {
 		void this.saveSettings();
 	}
 
+	setPenCursorFallback(enabled: boolean): void {
+		this.settings.usePenCursorFallback = enabled;
+		this.refreshActiveLayerSettings();
+		void this.saveSettings();
+	}
+
 	async loadSettings(): Promise<void> {
 		this.settings = normalizeDrawInCanvasSettings(await this.loadData() as Partial<DrawInCanvasSettings>);
 	}

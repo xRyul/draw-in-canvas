@@ -82,6 +82,7 @@ export interface DrawInCanvasSettings {
 	strokeHardness: number;
 	strokeOpacity: number;
 	beautifulStrokes: boolean;
+	usePenCursorFallback: boolean;
 	strokeThinning: number;
 	strokeStreamline: number;
 	strokeSmoothing: number;
@@ -95,6 +96,7 @@ export const DEFAULT_SETTINGS: DrawInCanvasSettings = {
 	strokeHardness: DEFAULT_STROKE_HARDNESS,
 	strokeOpacity: DEFAULT_STROKE_OPACITY,
 	beautifulStrokes: false,
+	usePenCursorFallback: true,
 	strokeThinning: DEFAULT_FREEHAND_THINNING,
 	strokeStreamline: DEFAULT_FREEHAND_STREAMLINE,
 	strokeSmoothing: DEFAULT_FREEHAND_SMOOTHING,
@@ -157,6 +159,7 @@ export function normalizeDrawInCanvasSettings(settings: Partial<DrawInCanvasSett
 		strokeHardness: normalizeStrokeHardness(settings.strokeHardness),
 		strokeOpacity: normalizeStrokeOpacity(settings.strokeOpacity),
 		beautifulStrokes: settings.beautifulStrokes === true,
+		usePenCursorFallback: settings.usePenCursorFallback !== false,
 		strokeThinning: normalizeFreehandSliderValue("strokeThinning", settings.strokeThinning),
 		strokeStreamline: normalizeFreehandSliderValue("strokeStreamline", settings.strokeStreamline),
 		strokeSmoothing: normalizeFreehandSliderValue("strokeSmoothing", settings.strokeSmoothing),
@@ -239,6 +242,15 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.beautifulStrokes)
 				.onChange((value) => {
 					this.plugin.setBeautifulStrokes(value);
+				}));
+
+		new Setting(containerEl)
+			.setName("Pen cursor fallback")
+			.setDesc("Show a plugin cursor while drawing with a stylus when the native cursor is hidden or unreliable.")
+			.addToggle((toggle) => toggle
+				.setValue(this.plugin.settings.usePenCursorFallback)
+				.onChange((value) => {
+					this.plugin.setPenCursorFallback(value);
 				}));
 
 		const noteEl = document.createElement("p");

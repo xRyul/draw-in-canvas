@@ -8,8 +8,63 @@
 	background: transparent;
 }
 
+.draw-in-canvas-capture-layer.is-pen-cursor-active {
+	cursor: none;
+}
+
 .draw-in-canvas-capture-layer:focus {
 	outline: none;
+}
+
+.draw-in-canvas-pen-cursor {
+	--draw-in-canvas-pen-cursor-size: 8px;
+
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 10000;
+	box-sizing: border-box;
+	width: var(--draw-in-canvas-pen-cursor-size);
+	height: var(--draw-in-canvas-pen-cursor-size);
+	border: 1.5px solid var(--draw-in-canvas-current-color, var(--interactive-accent));
+	border-radius: 50%;
+	color: var(--draw-in-canvas-current-color, var(--interactive-accent));
+	opacity: 0;
+	pointer-events: none;
+	transform: translate3d(-9999px, -9999px, 0) translate(-50%, -50%);
+	transition: opacity 80ms ease-out;
+	filter: drop-shadow(0 0 1px var(--background-primary)) drop-shadow(0 0 2px rgb(0 0 0 / 0.35));
+	will-change: transform;
+}
+
+.draw-in-canvas-pen-cursor::before,
+.draw-in-canvas-pen-cursor::after {
+	content: "";
+	position: absolute;
+	border-radius: 999px;
+	background: currentColor;
+	opacity: 0.85;
+	pointer-events: none;
+}
+
+.draw-in-canvas-pen-cursor::before {
+	top: -5px;
+	bottom: -5px;
+	left: 50%;
+	width: 1px;
+	transform: translateX(-50%);
+}
+
+.draw-in-canvas-pen-cursor::after {
+	top: 50%;
+	right: -5px;
+	left: -5px;
+	height: 1px;
+	transform: translateY(-50%);
+}
+
+.draw-in-canvas-pen-cursor.is-visible {
+	opacity: 1;
 }
 
 .draw-in-canvas-stale {

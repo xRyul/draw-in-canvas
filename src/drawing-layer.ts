@@ -59,7 +59,7 @@ const PRESET_STROKE_COLORS = [
 ] as const;
 const DEFAULT_CUSTOM_COLOR = "#8b5cf6";
 const CUSTOM_COLOR_SHADE_COUNT = 6;
-const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview";
+const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const COLOR_PALETTE_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
 
@@ -143,6 +143,11 @@ interface BrushPreviewState {
 	y: number;
 }
 
+interface PenCursorPosition {
+	x: number;
+	y: number;
+}
+
 export function hideAllDrawInCanvasElements(root: ParentNode): void {
 	const elements = Array.from(root.querySelectorAll<Element>(STALE_ELEMENT_SELECTOR));
 
@@ -187,6 +192,10 @@ export class DrawingLayer {
 	private toolbarPressState: ToolbarPressState | null = null;
 	private brushPreviewEl: HTMLElement | null = null;
 	private brushPreviewState: BrushPreviewState | null = null;
+	private penCursorEl: HTMLElement | null = null;
+	private pendingPenCursorPosition: PenCursorPosition | null = null;
+	private penCursorFrameId: number | null = null;
+	private penCursorAppearanceKey = "";
 	private undoButtonEl: HTMLElement | null = null;
 	private redoButtonEl: HTMLElement | null = null;
 	private activeStroke: CanvasStroke | null = null;
@@ -316,6 +325,7 @@ export class DrawingLayer {
 
 	disableDrawingMode(): void {
 		this.finishActiveStroke();
+		this.removePenCursor();
 
 		for (const dispose of this.captureDisposers.splice(0)) {
 			dispose();
@@ -343,6 +353,12 @@ export class DrawingLayer {
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
 		this.syncBrushControls();
+
+		if (!this.settings.usePenCursorFallback) {
+			this.hidePenCursor();
+		} else {
+			this.penCursorAppearanceKey = "";
+		}
 
 		if (shouldRerenderStrokes) {
 			if (this.activeStroke) {
@@ -422,7 +438,9 @@ export class DrawingLayer {
 			this.addListener(captureEl, "pointermove", this.handlePointerMove),
 			this.addListener(captureEl, "pointerup", this.handlePointerUp),
 			this.addListener(captureEl, "pointercancel", this.handlePointerUp),
+			this.addListener(captureEl, "pointerleave", this.handlePointerLeave),
 			this.addListener(captureEl, "keydown", this.handleKeyDown),
+			this.addListener(window, "blur", this.handleCaptureWindowBlur),
 		);
 
 		window.requestAnimationFrame(() => captureEl.focus({preventScroll: true}));
@@ -1603,9 +1621,11 @@ export class DrawingLayer {
 		}
 
 		if (this.isSpaceKeyPressed) {
+			this.hidePenCursor();
 			return;
 		}
 
+		this.showPenCursorFromEvent(event);
 		this.mountRenderLayer();
 
 		const point = this.clientPointToCanvasPoint(event);
@@ -1645,6 +1665,8 @@ export class DrawingLayer {
 	};
 
 	private readonly handlePointerMove = (event: PointerEvent): void => {
+		this.showPenCursorFromEvent(event);
+
 		if (!this.activeStroke || !this.activeStrokeGroupEl || event.pointerId !== this.activeStrokePointerId) {
 			return;
 		}
@@ -1660,6 +1682,10 @@ export class DrawingLayer {
 
 	private readonly handlePointerUp = (event: PointerEvent): void => {
 		if (!this.activeStroke || event.pointerId !== this.activeStrokePointerId) {
+			if (event.type === "pointercancel") {
+				this.hidePenCursor();
+			}
+
 			return;
 		}
 
@@ -1673,7 +1699,132 @@ export class DrawingLayer {
 		}
 
 		this.finishActiveStroke();
+		this.updatePenCursorAfterPointerEnd(event);
 	};
+
+	private readonly handlePointerLeave = (event: PointerEvent): void => {
+		if (!isPenPointerEvent(event)) {
+			return;
+		}
+
+		if (this.activeStroke && event.pointerId === this.activeStrokePointerId) {
+			return;
+		}
+
+		this.hidePenCursor();
+	};
+
+	private readonly handleCaptureWindowBlur = (): void => {
+		this.hidePenCursor();
+	};
+
+	private showPenCursorFromEvent(event: PointerEvent): void {
+		if (!this.settings.usePenCursorFallback || !isPenPointerEvent(event) || !this.captureEl || this.isSpaceKeyPressed) {
+			this.hidePenCursor();
+			return;
+		}
+
+		const cursorEl = this.ensurePenCursorEl();
+		cursorEl.classList.add("is-visible");
+		this.captureEl.classList.add("is-pen-cursor-active");
+		this.pendingPenCursorPosition = {x: event.clientX, y: event.clientY};
+		this.schedulePenCursorUpdate();
+	}
+
+	private updatePenCursorAfterPointerEnd(event: PointerEvent): void {
+		if (!isPenPointerEvent(event)) {
+			return;
+		}
+
+		if (event.type === "pointercancel" || !this.captureEl || !isPointerEventInsideElement(event, this.captureEl)) {
+			this.hidePenCursor();
+			return;
+		}
+
+		this.showPenCursorFromEvent(event);
+	}
+
+	private ensurePenCursorEl(): HTMLElement {
+		if (this.penCursorEl?.isConnected) {
+			return this.penCursorEl;
+		}
+
+		const cursorEl = document.createElement("div");
+		cursorEl.classList.add("draw-in-canvas-pen-cursor");
+		cursorEl.setAttribute("aria-hidden", "true");
+		document.body.appendChild(cursorEl);
+		this.penCursorEl = cursorEl;
+		this.penCursorAppearanceKey = "";
+		return cursorEl;
+	}
+
+	private schedulePenCursorUpdate(): void {
+		if (this.penCursorFrameId !== null) {
+			return;
+		}
+
+		this.penCursorFrameId = window.requestAnimationFrame(() => {
+			this.penCursorFrameId = null;
+			this.updatePenCursorFromPendingPosition();
+		});
+	}
+
+	private updatePenCursorFromPendingPosition(): void {
+		if (!this.penCursorEl || !this.pendingPenCursorPosition) {
+			return;
+		}
+
+		this.syncPenCursorAppearance(this.penCursorEl);
+		this.penCursorEl.setCssStyles({
+			transform: `translate3d(${this.pendingPenCursorPosition.x}px, ${this.pendingPenCursorPosition.y}px, 0) translate(-50%, -50%)`,
+		});
+	}
+
+	private syncPenCursorAppearance(cursorEl: HTMLElement): void {
+		const color = this.settings.strokeColor;
+		const size = `${this.getPenCursorDiameter()}px`;
+		const appearanceKey = `${color}|${size}`;
+
+		if (appearanceKey === this.penCursorAppearanceKey) {
+			return;
+		}
+
+		cursorEl.setCssProps({
+			"--draw-in-canvas-current-color": color,
+			"--draw-in-canvas-pen-cursor-size": size,
+		});
+		this.penCursorAppearanceKey = appearanceKey;
+	}
+
+	private hidePenCursor(): void {
+		this.cancelPenCursorUpdate();
+		this.pendingPenCursorPosition = null;
+		this.penCursorEl?.classList.remove("is-visible");
+		this.captureEl?.classList.remove("is-pen-cursor-active");
+	}
+
+	private removePenCursor(): void {
+		this.hidePenCursor();
+		this.penCursorEl?.remove();
+		this.penCursorEl = null;
+		this.penCursorAppearanceKey = "";
+	}
+
+	private cancelPenCursorUpdate(): void {
+		if (this.penCursorFrameId === null) {
+			return;
+		}
+
+		window.cancelAnimationFrame(this.penCursorFrameId);
+		this.penCursorFrameId = null;
+	}
+
+	private getPenCursorDiameter(): number {
+		const matrix = this.svgEl?.getScreenCTM();
+		const screenScale = matrix ? getSvgScreenScale(matrix) : 1;
+		const diameter = normalizeStrokeWidth(this.settings.strokeWidth) * screenScale;
+		return Math.round(Math.min(96, Math.max(8, diameter)));
+	}
 
 	private appendActiveStrokePointerPoints(event: PointerEvent): boolean {
 		const activeStroke = this.activeStroke;
@@ -3842,7 +3993,25 @@ function getPointerPressure(event: PointerEvent): number | undefined {
 }
 
 function shouldCapturePointerPressure(event: PointerEvent): boolean {
+	return isPenPointerEvent(event);
+}
+
+function isPenPointerEvent(event: PointerEvent): boolean {
 	return event.pointerType === "pen";
+}
+
+function isPointerEventInsideElement(event: PointerEvent, element: Element): boolean {
+	const rect = element.getBoundingClientRect();
+
+	return event.clientX >= rect.left
+		&& event.clientX <= rect.right
+		&& event.clientY >= rect.top
+		&& event.clientY <= rect.bottom;
+}
+
+function getSvgScreenScale(matrix: DOMMatrix): number {
+	const scale = Math.max(Math.hypot(matrix.a, matrix.b), Math.hypot(matrix.c, matrix.d));
+	return Number.isFinite(scale) && scale > 0 ? scale : 1;
 }
 
 function getCoalescedPointerEvents(event: PointerEvent): PointerEvent[] {
