@@ -453,29 +453,22 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	border-radius: 0;
 }
 
-.draw-in-canvas-color-disc-palette-swatch {
+.draw-in-canvas-color-palette .draw-in-canvas-color-disc-palette-swatch {
 	box-sizing: border-box;
 	width: 100%;
 	aspect-ratio: 1;
 	height: auto;
 	padding: 0;
+	margin: 0;
 	border: 0;
-	border-right: 1px solid rgb(0 0 0 / 0.12);
-	border-bottom: 1px solid rgb(0 0 0 / 0.12);
 	appearance: none;
 	-webkit-appearance: none;
+	background-image: none;
 	background-color: var(--draw-in-canvas-swatch-color) !important;
 	box-shadow: none;
 	cursor: pointer;
 }
 
-.draw-in-canvas-color-disc-palette-swatch:nth-child(10n) {
-	border-right: 0;
-}
-
-.draw-in-canvas-color-disc-palette-swatch:nth-last-child(-n + 10) {
-	border-bottom: 0;
-}
 
 .draw-in-canvas-color-history-swatches.is-empty {
 	display: block;
@@ -516,16 +509,19 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	border-radius: 0;
 }
 
-.draw-in-canvas-color-swatch {
+.draw-in-canvas-color-palette .draw-in-canvas-color-swatch {
 	box-sizing: border-box;
 	width: 24px;
 	height: 24px;
 	padding: 0;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 0 !important;
+	margin: 0;
 	appearance: none;
 	-webkit-appearance: none;
+	background-image: none;
 	background-color: var(--draw-in-canvas-swatch-color) !important;
+	box-shadow: none;
 	cursor: pointer;
 }
 
@@ -535,8 +531,6 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	aspect-ratio: 1;
 	height: auto;
 	border: 0;
-	border-right: 1px solid rgb(0 0 0 / 0.12);
-	border-bottom: 1px solid rgb(0 0 0 / 0.12);
 }
 
 .draw-in-canvas-color-palette-swatch-grid .draw-in-canvas-color-swatch,
@@ -544,13 +538,6 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	border-radius: 0 !important;
 }
 
-.draw-in-canvas-color-palette-swatch-grid .draw-in-canvas-color-swatch:nth-child(10n) {
-	border-right: 0;
-}
-
-.draw-in-canvas-color-palette-swatch-grid .draw-in-canvas-color-swatch:nth-last-child(-n + 10) {
-	border-bottom: 0;
-}
 
 .draw-in-canvas-color-swatch:hover,
 .draw-in-canvas-color-swatch:focus-visible,
