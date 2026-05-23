@@ -187,6 +187,8 @@ export class DrawingLayer {
 	private selectButtonEl: HTMLElement | null = null;
 	private colorPaletteEl: HTMLElement | null = null;
 	private brushControlsEl: HTMLElement | null = null;
+	private brushColorButtonEl: HTMLButtonElement | null = null;
+	private colorPaletteTriggerEl: HTMLElement | null = null;
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
 	private shouldSelectCustomColorHexOnClick = false;
 	private toolbarPressState: ToolbarPressState | null = null;
@@ -503,10 +505,10 @@ export class DrawingLayer {
 
 		const buttonEl = document.createElement("div");
 		buttonEl.classList.add("canvas-control-item", "draw-in-canvas-control-item", "draw-in-canvas-pencil-control-item");
-		buttonEl.setAttribute("aria-label", "Toggle drawing mode. Long press or right click for stroke color and settings");
+		buttonEl.setAttribute("aria-label", "Toggle drawing mode. Long press or press the down arrow for stroke color and settings");
 		buttonEl.setAttribute("data-tooltip-position", "left");
 		buttonEl.setAttribute("role", "button");
-		buttonEl.setAttribute("aria-haspopup", "menu");
+		buttonEl.setAttribute("aria-haspopup", "dialog");
 		buttonEl.setAttribute("aria-expanded", "false");
 		buttonEl.tabIndex = 0;
 		setIcon(buttonEl, "pencil");
@@ -524,7 +526,6 @@ export class DrawingLayer {
 			this.addListener(buttonEl, "pointerup", this.handleToolbarPointerUp),
 			this.addListener(buttonEl, "pointercancel", this.handleToolbarPointerCancel),
 			this.addListener(buttonEl, "keydown", this.handleToolbarKeyDown),
-			this.addListener(buttonEl, "contextmenu", this.handleToolbarContextMenu),
 		);
 		this.syncToolbarButton();
 		this.hideStaleElements();
@@ -554,7 +555,7 @@ export class DrawingLayer {
 		this.toolbarButtonEl.classList.toggle("is-active", isEnabled);
 		this.toolbarButtonEl.setAttribute("aria-pressed", isEnabled.toString());
 		this.toolbarButtonEl.setCssProps({"--draw-in-canvas-current-color": this.settings.strokeColor});
-		this.toolbarButtonEl.setAttribute("aria-expanded", (this.colorPaletteEl?.isConnected ?? false).toString());
+		this.syncColorPaletteExpandedState();
 	}
 
 	private mountBrushControls(): void {
@@ -593,6 +594,7 @@ export class DrawingLayer {
 	}
 
 	private removeBrushControls(): void {
+		this.closeColorPalette();
 		this.closeBrushPreview();
 
 		for (const dispose of this.brushControlsDisposers.splice(0)) {
@@ -601,6 +603,7 @@ export class DrawingLayer {
 
 		this.brushControlsEl?.remove();
 		this.brushControlsEl = null;
+		this.brushColorButtonEl = null;
 	}
 
 	private createBrushSizeSliderControlEl(): HTMLElement {
@@ -628,6 +631,9 @@ export class DrawingLayer {
 		buttonEl.type = "button";
 		buttonEl.classList.add("draw-in-canvas-brush-color-button");
 		buttonEl.setAttribute("aria-label", "Open stroke color and settings");
+		buttonEl.setAttribute("aria-haspopup", "dialog");
+		buttonEl.setAttribute("aria-expanded", (this.colorPaletteEl?.isConnected ?? false).toString());
+		this.brushColorButtonEl = buttonEl;
 
 		this.brushControlsDisposers.push(
 			this.addListener(buttonEl, "pointerdown", this.handleBrushButtonPointerDown),
@@ -666,6 +672,8 @@ export class DrawingLayer {
 		this.brushControlsEl.setCssProps({
 			"--draw-in-canvas-current-color": this.settings.strokeColor,
 		});
+
+		this.syncColorPaletteExpandedState();
 
 		this.syncBrushSlider(
 			"size",
@@ -713,21 +721,27 @@ export class DrawingLayer {
 	}
 
 	private openColorPalette(): void {
-		if (!this.toolbarGroupEl || !this.toolbarButtonEl) {
-			return;
-		}
-
 		if (!this.isDrawingEnabled()) {
 			this.enableDrawingMode();
 		}
 
+		const triggerEl = this.getColorPaletteTriggerEl();
+
+		if (!triggerEl) {
+			return;
+		}
+
+		this.colorPaletteTriggerEl = triggerEl;
+
 		if (this.colorPaletteEl?.isConnected) {
 			this.positionColorPalette();
 			this.syncColorPaletteSelection();
+			this.syncColorPaletteExpandedState();
 			return;
 		}
 
 		this.closeColorPalette();
+		this.colorPaletteTriggerEl = triggerEl;
 
 		const paletteEl = document.createElement("div");
 		paletteEl.classList.add("draw-in-canvas-color-palette");
@@ -773,7 +787,7 @@ export class DrawingLayer {
 		this.colorPaletteEl = paletteEl;
 		document.body.classList.add(COLOR_PALETTE_OPEN_BODY_CLASS);
 		this.positionColorPalette();
-		this.toolbarButtonEl.setAttribute("aria-expanded", "true");
+		this.syncColorPaletteExpandedState();
 		this.colorPaletteDisposers.push(
 			this.addListener(document, "pointerdown", this.handleColorPaletteDocumentPointerDown, true),
 			this.addListener(document, "keydown", this.handleColorPaletteDocumentKeyDown, true),
@@ -784,24 +798,58 @@ export class DrawingLayer {
 		window.requestAnimationFrame(() => (selectedSwatchEl ?? swatchEls[0])?.focus({preventScroll: true}));
 	}
 
+	private getColorPaletteTriggerEl(): HTMLElement | null {
+		if (this.brushColorButtonEl?.isConnected) {
+			return this.brushColorButtonEl;
+		}
+
+		return this.toolbarButtonEl?.isConnected ? this.toolbarButtonEl : null;
+	}
+
+	private getColorPaletteAnchorEl(): HTMLElement | null {
+		if (this.brushControlsEl?.isConnected) {
+			return this.brushControlsEl;
+		}
+
+		return this.getColorPaletteTriggerEl();
+	}
+
 	private positionColorPalette(): void {
-		if (!this.colorPaletteEl || !this.toolbarButtonEl) {
+		const anchorEl = this.getColorPaletteAnchorEl();
+
+		if (!this.colorPaletteEl || !anchorEl) {
 			return;
 		}
 
-		const buttonRect = this.toolbarButtonEl.getBoundingClientRect();
+		const anchorRect = anchorEl.getBoundingClientRect();
 		const paletteRect = this.colorPaletteEl.getBoundingClientRect();
 		const viewportMargin = 8;
 		const gap = 8;
 		const top = Math.max(
 			viewportMargin,
-			Math.min(buttonRect.top, window.innerHeight - paletteRect.height - viewportMargin),
+			Math.min(anchorRect.top, window.innerHeight - paletteRect.height - viewportMargin),
 		);
-		const right = Math.max(viewportMargin, window.innerWidth - buttonRect.left + gap);
+
+		if (this.brushControlsEl?.isConnected) {
+			const left = Math.max(
+				viewportMargin,
+				Math.min(anchorRect.right + gap, window.innerWidth - paletteRect.width - viewportMargin),
+			);
+
+			this.colorPaletteEl.setCssStyles({
+				top: `${top}px`,
+				left: `${left}px`,
+				right: "auto",
+			});
+			return;
+		}
+
+		const right = Math.max(viewportMargin, window.innerWidth - anchorRect.left + gap);
 
 		this.colorPaletteEl.setCssStyles({
 			top: `${top}px`,
 			right: `${right}px`,
+			left: "auto",
 		});
 	}
 
@@ -813,8 +861,15 @@ export class DrawingLayer {
 
 		this.colorPaletteEl?.remove();
 		this.colorPaletteEl = null;
+		this.colorPaletteTriggerEl = null;
 		document.body.classList.remove(COLOR_PALETTE_OPEN_BODY_CLASS);
-		this.toolbarButtonEl?.setAttribute("aria-expanded", "false");
+		this.syncColorPaletteExpandedState();
+	}
+
+	private syncColorPaletteExpandedState(): void {
+		const isOpen = (this.colorPaletteEl?.isConnected ?? false).toString();
+		this.toolbarButtonEl?.setAttribute("aria-expanded", isOpen);
+		this.brushColorButtonEl?.setAttribute("aria-expanded", isOpen);
 	}
 
 	private syncColorPaletteSelection(): void {
@@ -2127,13 +2182,6 @@ export class DrawingLayer {
 		this.clearToolbarPressState();
 	};
 
-	private readonly handleToolbarContextMenu = (event: MouseEvent): void => {
-		event.preventDefault();
-		event.stopPropagation();
-		this.clearToolbarPressState();
-		this.toolbarButtonEl?.focus({preventScroll: true});
-		this.openColorPalette();
-	};
 
 	private readonly handleToolbarKeyDown = (event: KeyboardEvent): void => {
 		if (event.key === "ArrowDown") {
@@ -2503,8 +2551,9 @@ export class DrawingLayer {
 
 		event.preventDefault();
 		event.stopPropagation();
+		const focusTargetEl = this.colorPaletteTriggerEl ?? this.brushColorButtonEl ?? this.toolbarButtonEl;
 		this.closeColorPalette();
-		this.toolbarButtonEl?.focus({preventScroll: true});
+		focusTargetEl?.focus({preventScroll: true});
 	};
 
 	private readonly handleStrokePointerDown = (event: PointerEvent): void => {
