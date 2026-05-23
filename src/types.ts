@@ -1,5 +1,6 @@
 export const DRAWING_DATA_KEY = "drawInCanvas" as const;
 export const DRAWING_DATA_VERSION = 1 as const;
+export const COLOR_HISTORY_LIMIT = 10 as const;
 
 export interface StrokePoint {
 	x: number;
@@ -20,6 +21,7 @@ export interface CanvasStroke {
 export interface CanvasDrawingData {
 	version: typeof DRAWING_DATA_VERSION;
 	strokes: CanvasStroke[];
+	colorHistory: string[];
 }
 
 export type JsonCanvasDocument = Record<string, unknown> & {
@@ -32,6 +34,7 @@ export function createEmptyDrawingData(): CanvasDrawingData {
 	return {
 		version: DRAWING_DATA_VERSION,
 		strokes: [],
+		colorHistory: [],
 	};
 }
 

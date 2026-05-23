@@ -3,6 +3,7 @@ import {normalizeStrokeHardness, normalizeStrokeOpacity} from "./settings";
 import {
 	CanvasDrawingData,
 	CanvasStroke,
+	COLOR_HISTORY_LIMIT,
 	DRAWING_DATA_KEY,
 	DRAWING_DATA_VERSION,
 	JsonCanvasDocument,
@@ -36,11 +37,52 @@ function normalizeDrawingData(value: unknown): CanvasDrawingData {
 
 	const rawStrokes = Array.isArray(value.strokes) ? value.strokes : [];
 	const strokes = rawStrokes.map(toCanvasStroke).filter(isPresent);
+	const colorHistory = toColorHistory(value.colorHistory);
 
 	return {
 		version: DRAWING_DATA_VERSION,
 		strokes,
+		colorHistory,
 	};
+}
+
+function toColorHistory(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+
+	const colorHistory: string[] = [];
+
+	for (const rawColor of value) {
+		if (typeof rawColor !== "string") {
+			continue;
+		}
+
+		const color = normalizeColorHistoryColor(rawColor);
+
+		if (!color || colorHistory.includes(color)) {
+			continue;
+		}
+
+		colorHistory.push(color);
+
+		if (colorHistory.length >= COLOR_HISTORY_LIMIT) {
+			break;
+		}
+	}
+
+	return colorHistory;
+}
+
+function normalizeColorHistoryColor(value: string): string | null {
+	const match = /^#?([\da-f]{6})$/i.exec(value.trim());
+	const hexValue = match?.[1];
+
+	if (!hexValue) {
+		return null;
+	}
+
+	return `#${hexValue.toLowerCase()}`;
 }
 
 function toCanvasStroke(value: unknown): CanvasStroke | null {

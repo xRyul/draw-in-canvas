@@ -22,6 +22,7 @@ import {
 import {
 	CanvasDrawingData,
 	CanvasStroke,
+	COLOR_HISTORY_LIMIT,
 	StrokePoint,
 	normalizeStrokePressure,
 	createEmptyDrawingData,
@@ -47,15 +48,34 @@ const ACTIVE_STROKE_PREVIEW_OVERLAP = 8;
 const PRESET_STROKE_COLORS = [
 	{name: "Red", value: "#ef4444"},
 	{name: "Orange", value: "#f97316"},
+	{name: "Amber", value: "#f59e0b"},
 	{name: "Yellow", value: "#eab308"},
+	{name: "Lime", value: "#84cc16"},
 	{name: "Green", value: "#22c55e"},
+	{name: "Emerald", value: "#10b981"},
 	{name: "Teal", value: "#14b8a6"},
+	{name: "Cyan", value: "#06b6d4"},
 	{name: "Blue", value: "#3b82f6"},
-	{name: "Purple", value: "#8b5cf6"},
+	{name: "Indigo", value: "#6366f1"},
+	{name: "Violet", value: "#8b5cf6"},
+	{name: "Purple", value: "#a855f7"},
+	{name: "Fuchsia", value: "#d946ef"},
 	{name: "Pink", value: "#ec4899"},
+	{name: "Rose", value: "#f43f5e"},
+	{name: "Coral", value: "#fb7185"},
+	{name: "Brown", value: "#92400e"},
 	{name: "Slate", value: "#64748b"},
 	{name: "Black", value: "#111827"},
 	{name: "White", value: "#ffffff"},
+	{name: "Stone", value: "#a8a29e"},
+	{name: "Gray", value: "#9ca3af"},
+	{name: "Charcoal", value: "#374151"},
+	{name: "Maroon", value: "#7f1d1d"},
+	{name: "Ochre", value: "#b45309"},
+	{name: "Olive", value: "#4d7c0f"},
+	{name: "Forest", value: "#166534"},
+	{name: "Navy", value: "#1e3a8a"},
+	{name: "Lavender", value: "#c4b5fd"},
 ] as const;
 const DEFAULT_CUSTOM_COLOR = "#8b5cf6";
 const CUSTOM_COLOR_SHADE_COUNT = 6;
@@ -409,7 +429,10 @@ export class DrawingLayer {
 			type: "clear-strokes",
 			strokes: cloneStrokes(this.drawingData.strokes),
 		});
-		this.drawingData = createEmptyDrawingData();
+		this.drawingData = {
+			...createEmptyDrawingData(),
+			colorHistory: this.drawingData.colorHistory,
+		};
 		this.rebuildStrokeIndex();
 		this.selectedStrokeIds.clear();
 		this.renderStrokes();
@@ -1029,7 +1052,7 @@ export class DrawingLayer {
 	}
 
 	private syncColorPaletteSelection(): void {
-		const swatchEls = this.colorPaletteEl?.querySelectorAll<HTMLElement>(".draw-in-canvas-preset-color-swatch") ?? [];
+		const swatchEls = this.colorPaletteEl?.querySelectorAll<HTMLElement>(".draw-in-canvas-preset-color-swatch, .draw-in-canvas-history-color-swatch") ?? [];
 
 		for (const swatchEl of Array.from(swatchEls)) {
 			const isSelected = colorsMatch(swatchEl.dataset.color ?? "", this.settings.strokeColor);
@@ -1040,6 +1063,69 @@ export class DrawingLayer {
 		this.syncCustomColorControls();
 		this.syncColorWheelControls();
 		this.syncColorPaletteHeader();
+	}
+
+	private recordColorHistory(color: string): void {
+		const historyColor = normalizeHexColor(color);
+
+		if (!historyColor) {
+			return;
+		}
+
+		const nextHistory = [
+			historyColor,
+			...this.drawingData.colorHistory.filter((previousColor) => !colorsMatch(previousColor, historyColor)),
+		].slice(0, COLOR_HISTORY_LIMIT);
+		const didChange = nextHistory.length !== this.drawingData.colorHistory.length
+			|| nextHistory.some((nextColor, index) => !colorsMatch(nextColor, this.drawingData.colorHistory[index] ?? ""));
+
+		if (!didChange) {
+			return;
+		}
+
+		this.drawingData.colorHistory = nextHistory;
+		this.renderColorHistorySwatches();
+		this.scheduleSave();
+	}
+
+	private renderColorHistorySwatches(): void {
+		const swatchesEl = this.colorPaletteEl?.querySelector<HTMLElement>(".draw-in-canvas-color-history-swatches");
+
+		if (!swatchesEl) {
+			return;
+		}
+
+		this.populateColorHistorySwatches(swatchesEl);
+	}
+
+	private populateColorHistorySwatches(swatchesEl: HTMLElement): void {
+		const colors = this.drawingData.colorHistory.slice(0, COLOR_HISTORY_LIMIT);
+		swatchesEl.replaceChildren();
+		swatchesEl.classList.toggle("is-empty", colors.length === 0);
+		swatchesEl.setAttribute("aria-label", colors.length === 0 ? "Color history, empty" : "Color history");
+
+		if (colors.length === 0) {
+			const emptyEl = document.createElement("span");
+			emptyEl.classList.add("draw-in-canvas-color-history-empty");
+			emptyEl.textContent = "No colors yet";
+			swatchesEl.appendChild(emptyEl);
+			return;
+		}
+
+		for (const [index, color] of colors.entries()) {
+			const swatchEl = document.createElement("button");
+			swatchEl.type = "button";
+			swatchEl.classList.add("draw-in-canvas-color-disc-palette-swatch", "draw-in-canvas-history-color-swatch");
+			swatchEl.dataset.color = color;
+			swatchEl.setAttribute("aria-label", `Use history color ${index + 1} ${formatHexColor(color)} stroke color`);
+			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color});
+			swatchEl.setCssStyles({backgroundColor: color, borderRadius: "0"});
+
+			const isSelected = colorsMatch(color, this.settings.strokeColor);
+			swatchEl.classList.toggle("is-selected", isSelected);
+			swatchEl.setAttribute("aria-pressed", isSelected.toString());
+			swatchesEl.appendChild(swatchEl);
+		}
 	}
 
 	private syncStrokeSettingsPaletteControls(): void {
@@ -1136,7 +1222,7 @@ export class DrawingLayer {
 			shadeEl.dataset.color = shade.value;
 			shadeEl.setAttribute("aria-label", `Use ${shade.name.toLowerCase()} ${formatHexColor(shade.value)} stroke color`);
 			shadeEl.setCssProps({"--draw-in-canvas-custom-shade-color": shade.value});
-			shadeEl.setCssStyles({backgroundColor: shade.value});
+			shadeEl.setCssStyles({backgroundColor: shade.value, borderRadius: "0"});
 			shadeEl.classList.toggle("is-selected", colorsMatch(shade.value, this.settings.strokeColor));
 			shadeEl.setAttribute("aria-pressed", colorsMatch(shade.value, this.settings.strokeColor).toString());
 		}
@@ -1336,8 +1422,29 @@ export class DrawingLayer {
 		}
 
 		wheelEl.append(hueControlEl, discControlEl);
-		panelEl.append(wheelEl, this.createColorDiscPaletteEl());
+		panelEl.append(wheelEl, this.createColorHistorySectionEl(), this.createColorDiscPaletteEl());
 		return panelEl;
+	}
+
+	private createColorHistorySectionEl(): HTMLElement {
+		const historyEl = document.createElement("div");
+		historyEl.classList.add("draw-in-canvas-color-disc-palette", "draw-in-canvas-color-history");
+
+		const titleEl = document.createElement("div");
+		titleEl.classList.add("draw-in-canvas-color-disc-palette-title");
+		titleEl.textContent = "History";
+
+		const swatchesEl = document.createElement("div");
+		swatchesEl.classList.add("draw-in-canvas-color-disc-palette-swatches", "draw-in-canvas-color-history-swatches");
+
+		this.colorPaletteDisposers.push(
+			this.addListener(swatchesEl, "pointerdown", this.handleHistoryColorSwatchPointerDown),
+			this.addListener(swatchesEl, "click", this.handleHistoryColorSwatchClick),
+		);
+
+		this.populateColorHistorySwatches(swatchesEl);
+		historyEl.append(titleEl, swatchesEl);
+		return historyEl;
 	}
 
 	private createColorDiscPaletteEl(): HTMLElement {
@@ -1359,7 +1466,7 @@ export class DrawingLayer {
 			swatchEl.dataset.color = color.value;
 			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
 			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
-			swatchEl.setCssStyles({backgroundColor: color.value});
+			swatchEl.setCssStyles({backgroundColor: color.value, borderRadius: "0"});
 
 			this.colorPaletteDisposers.push(
 				this.addListener(swatchEl, "pointerdown", this.handleColorSwatchPointerDown),
@@ -1391,7 +1498,7 @@ export class DrawingLayer {
 			swatchEl.dataset.color = color.value;
 			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
 			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
-			swatchEl.setCssStyles({backgroundColor: color.value});
+			swatchEl.setCssStyles({backgroundColor: color.value, borderRadius: "0"});
 
 			this.colorPaletteDisposers.push(
 				this.addListener(swatchEl, "pointerdown", this.handleColorSwatchPointerDown),
@@ -2633,6 +2740,46 @@ export class DrawingLayer {
 		event.stopPropagation();
 	};
 
+	private readonly handleHistoryColorSwatchPointerDown = (event: PointerEvent): void => {
+		const swatchEl = this.getHistoryColorSwatchEventTarget(event);
+
+		if (!swatchEl) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+	};
+
+	private readonly handleHistoryColorSwatchClick = (event: MouseEvent): void => {
+		const swatchEl = this.getHistoryColorSwatchEventTarget(event);
+
+		if (!swatchEl) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+
+		const color = swatchEl.dataset.color;
+
+		if (!color) {
+			return;
+		}
+
+		this.setStrokeColor(color);
+		this.recordColorHistory(color);
+	};
+
+	private getHistoryColorSwatchEventTarget(event: Event): HTMLElement | null {
+		if (!(event.target instanceof Element) || !(event.currentTarget instanceof HTMLElement)) {
+			return null;
+		}
+
+		const swatchEl = event.target.closest<HTMLElement>(".draw-in-canvas-history-color-swatch");
+		return swatchEl && event.currentTarget.contains(swatchEl) ? swatchEl : null;
+	}
+
 	private readonly handlePresetColorSwatchClick = (event: MouseEvent): void => {
 		event.preventDefault();
 		event.stopPropagation();
@@ -2648,6 +2795,7 @@ export class DrawingLayer {
 		}
 
 		this.setStrokeColor(color);
+		this.recordColorHistory(color);
 	};
 
 	private readonly handleColorPaletteTabClick = (event: MouseEvent): void => {
@@ -2737,6 +2885,7 @@ export class DrawingLayer {
 
 		event.preventDefault();
 		event.stopPropagation();
+		this.recordColorHistory(this.customColorHex);
 	};
 
 	private readonly handleColorWheelKeyDown = (event: KeyboardEvent): void => {
@@ -2758,6 +2907,7 @@ export class DrawingLayer {
 		event.preventDefault();
 		event.stopPropagation();
 		this.setColorWheelHsv(nextColor);
+		this.recordColorHistory(hsvToHex(nextColor));
 	};
 
 	private updateColorWheelFromPointer(controlEl: HTMLElement, event: PointerEvent, control: ColorWheelControl): void {
@@ -2783,6 +2933,10 @@ export class DrawingLayer {
 
 		this.customColorHex = hexColor;
 		this.setStrokeColor(hexColor);
+
+		if (event.type === "change") {
+			this.recordColorHistory(hexColor);
+		}
 	};
 
 	private readonly handleCustomColorHexPointerDown = (event: PointerEvent): void => {
@@ -2852,6 +3006,7 @@ export class DrawingLayer {
 		if (hexColor) {
 			this.customColorHex = hexColor;
 			this.setStrokeColor(hexColor);
+			this.recordColorHistory(hexColor);
 		}
 
 		event.currentTarget.value = formatHexColor(this.customColorHex);
@@ -2884,6 +3039,7 @@ export class DrawingLayer {
 		}
 
 		this.setStrokeColor(color);
+		this.recordColorHistory(color);
 	};
 
 	private readonly handleStrokeWidthSliderPointerDown = (event: PointerEvent): void => {
