@@ -1295,6 +1295,15 @@ export class DrawingLayer {
 		}
 
 		for (const labelEl of Array.from(labelEls)) {
+			if (labelEl instanceof HTMLInputElement) {
+				if (document.activeElement !== labelEl || labelEl.readOnly) {
+					labelEl.value = colorLabel;
+					setHexInputValidity(labelEl, true);
+				}
+
+				continue;
+			}
+
 			labelEl.textContent = colorLabel;
 		}
 	}
@@ -1383,9 +1392,29 @@ export class DrawingLayer {
 		previewEl.classList.add("draw-in-canvas-current-color-preview");
 		previewEl.setCssProps({"--draw-in-canvas-current-color": this.settings.strokeColor});
 
-		const labelEl = document.createElement("span");
+		const labelEl = document.createElement("input");
 		labelEl.classList.add("draw-in-canvas-current-color-label");
-		labelEl.textContent = normalizeHexColor(this.settings.strokeColor)?.toUpperCase() ?? this.settings.strokeColor;
+		labelEl.type = "text";
+		labelEl.inputMode = "text";
+		labelEl.maxLength = 7;
+		labelEl.pattern = "#?[0-9A-Fa-f]{6}";
+		labelEl.spellcheck = false;
+		labelEl.readOnly = true;
+		labelEl.value = normalizeHexColor(this.settings.strokeColor)?.toUpperCase() ?? this.settings.strokeColor;
+		labelEl.title = "Click to copy; double-click to edit.";
+		labelEl.setAttribute("aria-label", "Current hex stroke color. Click to copy; double-click or press enter to edit.");
+		setHexInputValidity(labelEl, true);
+
+		this.colorPaletteDisposers.push(
+			this.addListener(labelEl, "pointerdown", this.handleCurrentColorHexPointerDown),
+			this.addListener(labelEl, "click", this.handleCurrentColorHexClick),
+			this.addListener(labelEl, "dblclick", this.handleCurrentColorHexDoubleClick),
+			this.addListener(labelEl, "focus", this.handleCurrentColorHexFocus),
+			this.addListener(labelEl, "input", this.handleCurrentColorHexInput),
+			this.addListener(labelEl, "change", this.handleCurrentColorHexChange),
+			this.addListener(labelEl, "blur", this.handleCurrentColorHexChange),
+			this.addListener(labelEl, "keydown", this.handleCurrentColorHexKeyDown),
+		);
 
 		currentColorEl.append(previewEl, labelEl);
 		headerEl.append(titleEl, currentColorEl);
@@ -1442,7 +1471,12 @@ export class DrawingLayer {
 		}
 
 		wheelEl.append(hueControlEl, discControlEl);
-		panelEl.append(wheelEl, this.createColorHistorySectionEl(), this.createColorDiscPaletteEl());
+		panelEl.append(
+			wheelEl,
+			this.createColorHistorySectionEl(),
+			this.createColorDiscPaletteEl(),
+			this.createCustomColorShadesEl("Selected color shades"),
+		);
 		return panelEl;
 	}
 
@@ -1588,6 +1622,28 @@ export class DrawingLayer {
 		return pickerLabelEl;
 	}
 
+	private createCustomColorShadesEl(ariaLabel: string): HTMLElement {
+		const shadesEl = document.createElement("div");
+		shadesEl.classList.add("draw-in-canvas-custom-color-shades");
+		shadesEl.setAttribute("aria-label", ariaLabel);
+
+		for (let index = 0; index < CUSTOM_COLOR_SHADE_COUNT; index++) {
+			const shadeEl = document.createElement("button");
+			shadeEl.type = "button";
+			shadeEl.classList.add("draw-in-canvas-custom-color-shade");
+			shadeEl.dataset.shadeIndex = index.toString();
+
+			this.colorPaletteDisposers.push(
+				this.addListener(shadeEl, "pointerdown", this.handleColorSwatchPointerDown),
+				this.addListener(shadeEl, "click", this.handleCustomColorShadeClick),
+			);
+
+			shadesEl.appendChild(shadeEl);
+		}
+
+		return shadesEl;
+	}
+
 	private createCustomColorControlEl(): HTMLElement {
 		const controlEl = document.createElement("div");
 		controlEl.classList.add("draw-in-canvas-custom-color-control");
@@ -1614,23 +1670,7 @@ export class DrawingLayer {
 
 		fieldEl.append(labelEl, inputEl);
 
-		const shadesEl = document.createElement("div");
-		shadesEl.classList.add("draw-in-canvas-custom-color-shades");
-		shadesEl.setAttribute("aria-label", "Custom color shades");
-
-		for (let index = 0; index < CUSTOM_COLOR_SHADE_COUNT; index++) {
-			const shadeEl = document.createElement("button");
-			shadeEl.type = "button";
-			shadeEl.classList.add("draw-in-canvas-custom-color-shade");
-			shadeEl.dataset.shadeIndex = index.toString();
-
-			this.colorPaletteDisposers.push(
-				this.addListener(shadeEl, "pointerdown", this.handleColorSwatchPointerDown),
-				this.addListener(shadeEl, "click", this.handleCustomColorShadeClick),
-			);
-
-			shadesEl.appendChild(shadeEl);
-		}
+		const shadesEl = this.createCustomColorShadesEl("Custom color shades");
 
 		this.colorPaletteDisposers.push(
 			this.addListener(inputEl, "pointerdown", this.handleCustomColorHexPointerDown),
@@ -2936,6 +2976,170 @@ export class DrawingLayer {
 			: {...this.colorWheelHsv, ...getColorWheelDiscValuesFromPointer(controlEl, event.clientX, event.clientY)};
 
 		this.setColorWheelHsv(nextColor);
+	}
+
+	private readonly handleCurrentColorHexPointerDown = (event: PointerEvent): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement) || !event.currentTarget.readOnly) {
+			return;
+		}
+
+		event.preventDefault();
+		event.currentTarget.focus({preventScroll: true});
+	};
+
+	private readonly handleCurrentColorHexClick = (event: MouseEvent): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement) || !event.currentTarget.readOnly) {
+			return;
+		}
+
+		event.preventDefault();
+
+		if (event.detail >= 2) {
+			this.beginCurrentColorHexEdit(event.currentTarget);
+			return;
+		}
+
+		void this.copyCurrentColorHexToClipboard(event.currentTarget);
+	};
+
+	private readonly handleCurrentColorHexDoubleClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (event.currentTarget instanceof HTMLInputElement) {
+			this.beginCurrentColorHexEdit(event.currentTarget);
+		}
+	};
+
+	private readonly handleCurrentColorHexFocus = (event: FocusEvent): void => {
+		if (!(event.currentTarget instanceof HTMLInputElement) || event.currentTarget.readOnly) {
+			return;
+		}
+
+		const inputEl = event.currentTarget;
+
+		window.requestAnimationFrame(() => {
+			if (document.activeElement === inputEl && !inputEl.readOnly) {
+				inputEl.select();
+			}
+		});
+	};
+
+	private readonly handleCurrentColorHexInput = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement) || event.currentTarget.readOnly) {
+			return;
+		}
+
+		const hexColor = normalizeHexColor(event.currentTarget.value);
+		const isEmpty = event.currentTarget.value.trim().length === 0;
+		setHexInputValidity(event.currentTarget, Boolean(hexColor) || isEmpty);
+
+		if (!hexColor) {
+			return;
+		}
+
+		this.customColorHex = hexColor;
+		this.setStrokeColor(hexColor);
+	};
+
+	private readonly handleCurrentColorHexChange = (event: Event): void => {
+		event.stopPropagation();
+
+		if (event.currentTarget instanceof HTMLInputElement) {
+			this.commitCurrentColorHexEdit(event.currentTarget);
+		}
+	};
+
+	private readonly handleCurrentColorHexKeyDown = (event: KeyboardEvent): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		if (event.currentTarget.readOnly) {
+			if (event.key === "Enter" || event.key === "F2") {
+				event.preventDefault();
+				this.beginCurrentColorHexEdit(event.currentTarget);
+				return;
+			}
+
+			if (event.key === " " || isCopyShortcutEvent(event)) {
+				event.preventDefault();
+				void this.copyCurrentColorHexToClipboard(event.currentTarget);
+			}
+
+			return;
+		}
+
+		if (event.key === "Enter") {
+			event.preventDefault();
+			event.currentTarget.blur();
+			return;
+		}
+
+		if (event.key === "Escape") {
+			event.preventDefault();
+			this.resetCurrentColorHexInput(event.currentTarget);
+			event.currentTarget.blur();
+		}
+	};
+
+	private beginCurrentColorHexEdit(inputEl: HTMLInputElement): void {
+		inputEl.readOnly = false;
+		inputEl.classList.add("is-editing");
+		inputEl.value = formatHexColor(this.settings.strokeColor);
+		setHexInputValidity(inputEl, true);
+		inputEl.focus({preventScroll: true});
+
+		window.requestAnimationFrame(() => {
+			if (document.activeElement === inputEl && !inputEl.readOnly) {
+				inputEl.select();
+			}
+		});
+	}
+
+	private commitCurrentColorHexEdit(inputEl: HTMLInputElement): void {
+		const wasEditing = !inputEl.readOnly;
+		const hexColor = normalizeHexColor(inputEl.value);
+
+		if (hexColor && wasEditing) {
+			this.customColorHex = hexColor;
+			this.setStrokeColor(hexColor);
+			this.recordColorHistory(hexColor);
+		}
+
+		inputEl.readOnly = true;
+		inputEl.classList.remove("is-editing");
+		inputEl.value = formatHexColor(this.settings.strokeColor);
+		setHexInputValidity(inputEl, true);
+	}
+
+	private resetCurrentColorHexInput(inputEl: HTMLInputElement): void {
+		inputEl.readOnly = true;
+		inputEl.classList.remove("is-editing");
+		inputEl.value = formatHexColor(this.settings.strokeColor);
+		setHexInputValidity(inputEl, true);
+	}
+
+	private async copyCurrentColorHexToClipboard(inputEl: HTMLInputElement): Promise<void> {
+		const color = formatHexColor(this.settings.strokeColor);
+		inputEl.value = color;
+		setHexInputValidity(inputEl, true);
+
+		try {
+			await copyTextToClipboard(color);
+			new Notice(`Copied ${color}`);
+		} catch (error) {
+			console.error("Draw in canvas could not copy hex color", error);
+			new Notice("Draw in canvas could not copy hex color. See console for details.");
+		}
 	}
 
 	private readonly handleNativeColorPickerInput = (event: Event): void => {
@@ -4890,6 +5094,18 @@ function formatHexColor(value: string): string {
 function setHexInputValidity(inputEl: HTMLInputElement, isValid: boolean): void {
 	inputEl.classList.toggle("is-invalid", !isValid);
 	inputEl.setAttribute("aria-invalid", (!isValid).toString());
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+	if (!navigator.clipboard) {
+		throw new Error("Clipboard API is unavailable");
+	}
+
+	await navigator.clipboard.writeText(text);
+}
+
+function isCopyShortcutEvent(event: KeyboardEvent): boolean {
+	return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c";
 }
 
 function getCustomColorShades(hexColor: string): Array<{name: string; value: string}> {
