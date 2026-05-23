@@ -181,8 +181,6 @@ export class DrawingLayer {
 	private selectButtonEl: HTMLElement | null = null;
 	private colorPaletteEl: HTMLElement | null = null;
 	private brushControlsEl: HTMLElement | null = null;
-	private brushUndoButtonEl: HTMLButtonElement | null = null;
-	private brushRedoButtonEl: HTMLButtonElement | null = null;
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
 	private shouldSelectCustomColorHexOnClick = false;
 	private toolbarPressState: ToolbarPressState | null = null;
@@ -562,21 +560,15 @@ export class DrawingLayer {
 		controlsEl.setAttribute("aria-label", "Brush size and opacity");
 
 		const colorButtonEl = this.createBrushColorButtonEl();
-		const undoButtonEl = this.createBrushHistoryButtonEl("undo");
-		const redoButtonEl = this.createBrushHistoryButtonEl("redo");
 
 		controlsEl.append(
 			this.createBrushSizeSliderControlEl(),
 			colorButtonEl,
 			this.createBrushOpacitySliderControlEl(),
-			undoButtonEl,
-			redoButtonEl,
 		);
 
 		controlsParentEl.appendChild(controlsEl);
 		this.brushControlsEl = controlsEl;
-		this.brushUndoButtonEl = undoButtonEl;
-		this.brushRedoButtonEl = redoButtonEl;
 		this.syncBrushControls();
 		this.hideStaleElements();
 	}
@@ -590,8 +582,6 @@ export class DrawingLayer {
 
 		this.brushControlsEl?.remove();
 		this.brushControlsEl = null;
-		this.brushUndoButtonEl = null;
-		this.brushRedoButtonEl = null;
 	}
 
 	private createBrushSizeSliderControlEl(): HTMLElement {
@@ -649,22 +639,6 @@ export class DrawingLayer {
 		return sliderEl;
 	}
 
-	private createBrushHistoryButtonEl(action: "undo" | "redo"): HTMLButtonElement {
-		const buttonEl = document.createElement("button");
-		buttonEl.type = "button";
-		buttonEl.classList.add("draw-in-canvas-brush-history-button", `draw-in-canvas-brush-${action}-button`);
-		buttonEl.setAttribute("aria-label", action === "undo" ? "Undo last drawing stroke" : "Redo last drawing stroke");
-		setIcon(buttonEl, action === "undo" ? "undo-2" : "redo-2");
-
-		this.brushControlsDisposers.push(
-			this.addListener(buttonEl, "pointerdown", this.handleBrushButtonPointerDown),
-			this.addListener(buttonEl, "click", action === "undo" ? this.handleBrushUndoButtonClick : this.handleBrushRedoButtonClick),
-			this.addListener(buttonEl, "keydown", action === "undo" ? this.handleBrushUndoButtonKeyDown : this.handleBrushRedoButtonKeyDown),
-		);
-
-		return buttonEl;
-	}
-
 	private syncBrushControls(): void {
 		if (!this.brushControlsEl) {
 			return;
@@ -690,7 +664,6 @@ export class DrawingLayer {
 			formatStrokeOpacity,
 			"Brush opacity",
 		);
-		this.syncBrushHistoryButtons();
 	}
 
 	private syncBrushSlider(
@@ -718,24 +691,6 @@ export class DrawingLayer {
 		if (valueEl) {
 			valueEl.textContent = valueText;
 		}
-	}
-
-	private syncBrushHistoryButtons(): void {
-		const canUndo = this.undoStack.length > 0;
-		const canRedo = this.redoStack.length > 0;
-
-		this.syncBrushHistoryButton(this.brushUndoButtonEl, canUndo);
-		this.syncBrushHistoryButton(this.brushRedoButtonEl, canRedo);
-	}
-
-	private syncBrushHistoryButton(buttonEl: HTMLButtonElement | null, isEnabled: boolean): void {
-		if (!buttonEl) {
-			return;
-		}
-
-		buttonEl.disabled = !isEnabled;
-		buttonEl.classList.toggle("is-disabled", !isEnabled);
-		buttonEl.setAttribute("aria-disabled", (!isEnabled).toString());
 	}
 
 	private openColorPalette(): void {
@@ -1423,7 +1378,6 @@ export class DrawingLayer {
 	private syncCanvasUndoRedoButtons(): void {
 		this.undoButtonEl?.classList.toggle("draw-in-canvas-can-undo", this.undoStack.length > 0);
 		this.redoButtonEl?.classList.toggle("draw-in-canvas-can-redo", this.redoStack.length > 0);
-		this.syncBrushHistoryButtons();
 	}
 
 	private syncStrokeInteractionListeners(): void {
@@ -2212,50 +2166,6 @@ export class DrawingLayer {
 		event.preventDefault();
 		event.stopPropagation();
 		this.openColorPalette();
-	};
-
-	private readonly handleBrushUndoButtonClick = (event: MouseEvent): void => {
-		event.preventDefault();
-		event.stopPropagation();
-
-		if (this.undoStack.length > 0) {
-			void this.undoLastStroke();
-		}
-	};
-
-	private readonly handleBrushRedoButtonClick = (event: MouseEvent): void => {
-		event.preventDefault();
-		event.stopPropagation();
-
-		if (this.redoStack.length > 0) {
-			void this.redoLastStroke();
-		}
-	};
-
-	private readonly handleBrushUndoButtonKeyDown = (event: KeyboardEvent): void => {
-		if (!isActivationKey(event)) {
-			return;
-		}
-
-		event.preventDefault();
-		event.stopPropagation();
-
-		if (this.undoStack.length > 0) {
-			void this.undoLastStroke();
-		}
-	};
-
-	private readonly handleBrushRedoButtonKeyDown = (event: KeyboardEvent): void => {
-		if (!isActivationKey(event)) {
-			return;
-		}
-
-		event.preventDefault();
-		event.stopPropagation();
-
-		if (this.redoStack.length > 0) {
-			void this.redoLastStroke();
-		}
 	};
 
 	private updateBrushSliderFromPointer(sliderEl: HTMLElement, event: PointerEvent): void {

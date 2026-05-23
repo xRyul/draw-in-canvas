@@ -56,24 +56,31 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .draw-in-canvas-brush-controls {
+	--draw-in-canvas-brush-control-bg: var(--background-primary);
+	--draw-in-canvas-brush-control-hover-bg: var(--background-modifier-hover);
+	--draw-in-canvas-brush-control-border: var(--background-modifier-border);
+	--draw-in-canvas-brush-control-border-hover: var(--background-modifier-border-hover);
+	--draw-in-canvas-brush-control-text: var(--text-muted);
+
 	position: absolute;
 	top: 50%;
 	left: max(4px, env(safe-area-inset-left));
 	z-index: 1001;
 	display: grid;
-	grid-template-rows: minmax(0, 1fr) 34px minmax(0, 1fr) 26px 26px;
+	grid-template-rows: minmax(72px, 1fr) 28px minmax(72px, 1fr);
 	justify-items: center;
 	align-items: center;
 	box-sizing: border-box;
-	width: 52px;
-	height: min(500px, calc(100vh - 96px));
-	max-height: calc(100% - 24px);
-	gap: 10px;
-	padding: 7px 5px 8px;
-	border: 1px solid rgb(255 255 255 / 0.12);
-	border-radius: 6px;
-	background: #171717;
-	box-shadow: 0 10px 28px rgb(0 0 0 / 0.35);
+	width: 44px;
+	height: min(280px, calc(100vh - 120px));
+	max-height: calc(100% - 32px);
+	gap: 8px;
+	padding: 6px 4px;
+	border: 1px solid var(--draw-in-canvas-brush-control-border);
+	border-radius: var(--radius-m);
+	background: var(--draw-in-canvas-brush-control-bg);
+	box-shadow: var(--shadow-s);
+	color: var(--draw-in-canvas-brush-control-text);
 	pointer-events: auto;
 	transform: translateY(-50%);
 	user-select: none;
@@ -84,8 +91,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: block;
 	width: 100%;
 	height: 100%;
-	min-height: 96px;
-	border-radius: 6px;
+	min-height: 72px;
+	border-radius: var(--radius-s);
 	cursor: ns-resize;
 	touch-action: none;
 }
@@ -105,10 +112,10 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-brush-slider-track {
 	position: absolute;
-	inset: 4px 8px;
-	border-radius: 5px;
-	background: rgb(255 255 255 / 0.14);
-	box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+	inset: 3px 7px;
+	border-radius: var(--radius-s);
+	background: var(--draw-in-canvas-brush-control-hover-bg);
+	box-shadow: inset 0 0 0 1px var(--draw-in-canvas-brush-control-border);
 	pointer-events: none;
 }
 
@@ -116,19 +123,19 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	position: absolute;
 	top: var(--draw-in-canvas-brush-slider-position, 50%);
 	left: 50%;
-	width: 40px;
-	height: 20px;
-	border: 1px solid rgb(255 255 255 / 0.28);
-	border-radius: 5px;
-	background: #a8a8a8;
-	box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+	width: 30px;
+	height: 16px;
+	border: 1px solid var(--draw-in-canvas-brush-control-border-hover);
+	border-radius: var(--radius-s);
+	background: var(--interactive-normal);
+	box-shadow: var(--input-shadow);
 	transform: translate(-50%, -50%);
 	pointer-events: none;
 }
 
 .draw-in-canvas-brush-slider-control:hover .draw-in-canvas-brush-slider-thumb,
 .draw-in-canvas-brush-slider-control:focus-visible .draw-in-canvas-brush-slider-thumb {
-	background: #c7c7c7;
+	background: var(--interactive-hover);
 }
 
 .draw-in-canvas-brush-slider-control:focus-visible {
@@ -136,24 +143,21 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	outline: none;
 }
 
-.draw-in-canvas-brush-color-button,
-.draw-in-canvas-brush-history-button {
+.draw-in-canvas-brush-color-button {
 	display: grid;
 	place-items: center;
 	box-sizing: border-box;
+	width: 26px;
+	height: 26px;
 	padding: 0;
+	border: 1px solid var(--draw-in-canvas-brush-control-border);
+	border-radius: var(--radius-s);
+	background: var(--interactive-normal);
+	color: var(--draw-in-canvas-brush-control-text);
 	appearance: none;
 	-webkit-appearance: none;
 	box-shadow: none;
 	cursor: pointer;
-}
-
-.draw-in-canvas-brush-color-button {
-	width: 28px;
-	height: 28px;
-	border: 2px solid #a8a8a8;
-	border-radius: 7px;
-	background: transparent;
 }
 
 .draw-in-canvas-brush-color-button::after {
@@ -167,51 +171,27 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-brush-color-button:hover,
 .draw-in-canvas-brush-color-button:focus-visible {
-	border-color: #d0d0d0;
+	border-color: var(--draw-in-canvas-brush-control-border-hover);
+	background: var(--interactive-hover);
 	outline: none;
-}
-
-.draw-in-canvas-brush-history-button {
-	width: 28px;
-	height: 24px;
-	border: 0;
-	border-radius: 6px;
-	background: transparent;
-	color: #a8a8a8;
-}
-
-.draw-in-canvas-brush-history-button:hover:not(:disabled),
-.draw-in-canvas-brush-history-button:focus-visible:not(:disabled) {
-	background: rgb(255 255 255 / 0.08);
-	color: #d0d0d0;
-	outline: none;
-}
-
-.draw-in-canvas-brush-history-button:disabled {
-	color: rgb(168 168 168 / 0.28);
-	cursor: default;
-}
-
-.draw-in-canvas-brush-history-button svg {
-	width: 18px;
-	height: 18px;
 }
 
 @media (max-height: 420px) {
 	.draw-in-canvas-brush-controls {
-		grid-template-rows: minmax(0, 1fr) 28px minmax(0, 1fr) 22px 22px;
-		width: 46px;
-		gap: 7px;
-		padding: 6px 4px;
+		grid-template-rows: minmax(60px, 1fr) 26px minmax(60px, 1fr);
+		width: 40px;
+		height: min(224px, calc(100vh - 88px));
+		gap: 6px;
+		padding: 5px 3px;
 	}
 
 	.draw-in-canvas-brush-slider-control {
-		min-height: 72px;
+		min-height: 60px;
 	}
 
 	.draw-in-canvas-brush-slider-thumb {
-		width: 34px;
-		height: 18px;
+		width: 26px;
+		height: 14px;
 	}
 }
 
