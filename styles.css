@@ -276,8 +276,10 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-color-palette {
 	grid-template-rows: auto minmax(0, 1fr) auto;
-	width: min(340px, calc(100vw - 16px));
-	max-height: calc(100vh - 16px);
+	width: min(264px, calc(100vw - 10px));
+	max-height: calc(100vh - 10px);
+	gap: 6px;
+	padding: 7px;
 	overflow: hidden;
 }
 
@@ -285,11 +287,11 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 12px;
+	gap: 6px;
 }
 
 .draw-in-canvas-color-palette-title {
-	font-size: var(--font-ui-medium);
+	font-size: var(--font-ui-small);
 	font-weight: 700;
 	line-height: 1.2;
 	color: var(--text-normal);
@@ -299,7 +301,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: inline-flex;
 	align-items: center;
 	min-width: 0;
-	gap: 6px;
+	gap: 4px;
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
 	font-variant-numeric: tabular-nums;
@@ -308,10 +310,10 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-current-color-preview {
 	display: block;
-	width: 22px;
-	height: 22px;
+	width: 16px;
+	height: 16px;
 	border: 1px solid var(--background-modifier-border);
-	border-radius: 6px;
+	border-radius: 5px;
 	background: var(--draw-in-canvas-current-color, var(--interactive-accent));
 	box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
 	flex: 0 0 auto;
@@ -319,7 +321,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-current-color-label {
 	overflow: hidden;
-	max-width: 96px;
+	max-width: 64px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -327,13 +329,13 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-color-palette-panels {
 	min-height: 0;
 	overflow: auto;
-	padding: 2px;
-	margin: -2px;
+	padding: 1px;
+	margin: -1px;
 }
 
 .draw-in-canvas-color-palette-panel {
 	display: grid;
-	gap: 10px;
+	gap: 6px;
 	width: 100%;
 }
 
@@ -355,7 +357,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 	position: relative;
 	width: 100%;
-	max-width: 316px;
+	max-width: 250px;
 	aspect-ratio: 1;
 	border-radius: 50%;
 	user-select: none;
@@ -390,20 +392,20 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	background:
 		linear-gradient(to top, #000 0%, rgb(0 0 0 / 0) 100%),
 		linear-gradient(to right, #fff 0%, var(--draw-in-canvas-color-wheel-hue-color) 100%);
-	box-shadow: 0 0 0 8px var(--background-primary), inset 0 0 0 1px rgb(255 255 255 / 0.16);
+	box-shadow: 0 0 0 5px var(--background-primary), inset 0 0 0 1px rgb(255 255 255 / 0.16);
 }
 
 .draw-in-canvas-color-wheel-disc-field:focus-visible {
 	outline: none;
-	box-shadow: 0 0 0 8px var(--background-primary), 0 0 0 10px var(--interactive-accent), inset 0 0 0 1px rgb(255 255 255 / 0.16);
+	box-shadow: 0 0 0 5px var(--background-primary), 0 0 0 7px var(--interactive-accent), inset 0 0 0 1px rgb(255 255 255 / 0.16);
 }
 
 .draw-in-canvas-color-wheel-thumb {
 	position: absolute;
 	z-index: 3;
 	box-sizing: border-box;
-	width: 20px;
-	height: 20px;
+	width: 14px;
+	height: 14px;
 	border: 2px solid #fff;
 	border-radius: 50%;
 	background: var(--draw-in-canvas-color-wheel-selected-color);
@@ -415,17 +417,17 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	left: var(--draw-in-canvas-color-wheel-hue-x);
 	top: var(--draw-in-canvas-color-wheel-hue-y);
 	background: var(--draw-in-canvas-color-wheel-hue-color);
-	width: calc(22% - 8px);
-	height: calc(22% - 8px);
-	border-width: 3px;
+	width: calc(22% - 5px);
+	height: calc(22% - 5px);
+	border-width: 2px;
 	transform: translate(-50%, -50%);
 }
 
 .draw-in-canvas-color-wheel-disc-thumb {
 	left: var(--draw-in-canvas-color-wheel-disc-x);
 	top: var(--draw-in-canvas-color-wheel-disc-y);
-	width: 20px;
-	height: 20px;
+	width: 14px;
+	height: 14px;
 	z-index: 4;
 	transform: translate(-50%, -50%);
 }
@@ -433,7 +435,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-color-disc-palette {
 	display: grid;
 	width: 100%;
-	gap: 6px;
+	gap: 4px;
 }
 
 .draw-in-canvas-color-disc-palette-title {
@@ -454,7 +456,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-color-disc-palette-swatch {
 	box-sizing: border-box;
 	width: 100%;
-	height: 24px;
+	height: 16px;
 	padding: 0;
 	border: 0;
 	border-right: 1px solid rgb(0 0 0 / 0.12);
@@ -472,13 +474,13 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-color-disc-palette-swatch:hover,
 .draw-in-canvas-color-disc-palette-swatch:focus-visible {
 	z-index: 1;
-	box-shadow: inset 0 0 0 2px var(--background-primary), inset 0 0 0 4px var(--background-modifier-border-hover);
+	box-shadow: inset 0 0 0 1px var(--background-primary), inset 0 0 0 3px var(--background-modifier-border-hover);
 	outline: none;
 }
 
 .draw-in-canvas-color-disc-palette-swatch.is-selected {
 	z-index: 2;
-	box-shadow: inset 0 0 0 2px var(--background-primary), inset 0 0 0 4px var(--interactive-accent);
+	box-shadow: inset 0 0 0 1px var(--background-primary), inset 0 0 0 3px var(--interactive-accent);
 }
 
 .draw-in-canvas-presets-panel {
@@ -489,13 +491,13 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: grid;
 	grid-template-columns: repeat(4, minmax(0, 1fr));
 	place-items: center;
-	gap: 10px;
+	gap: 6px;
 }
 
 .draw-in-canvas-color-swatch {
 	box-sizing: border-box;
-	width: 34px;
-	height: 34px;
+	width: 24px;
+	height: 24px;
 	padding: 0;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 50%;
@@ -513,7 +515,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .draw-in-canvas-color-swatch.is-selected {
-	box-shadow: 0 0 0 3px var(--background-primary), 0 0 0 5px var(--interactive-accent);
+	box-shadow: 0 0 0 2px var(--background-primary), 0 0 0 4px var(--interactive-accent);
 }
 
 .draw-in-canvas-color-picker-swatch {
@@ -541,8 +543,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	z-index: 1;
 	display: grid;
 	place-items: center;
-	width: 18px;
-	height: 18px;
+	width: 12px;
+	height: 12px;
 	border-radius: 50%;
 	background: color-mix(in srgb, var(--background-primary) 84%, transparent);
 	filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.25));
@@ -551,16 +553,16 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-custom-color-control {
 	display: grid;
-	gap: 8px;
+	gap: 5px;
 	width: 100%;
-	margin-top: 2px;
+	margin-top: 1px;
 }
 
 .draw-in-canvas-custom-color-field {
 	display: grid;
 	grid-template-columns: auto minmax(0, 1fr);
 	align-items: center;
-	gap: 8px;
+	gap: 5px;
 	font-size: var(--font-ui-smaller);
 	line-height: 1.2;
 	color: var(--text-muted);
@@ -568,9 +570,9 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-custom-color-hex-input {
 	width: 100%;
-	height: 28px;
+	height: 22px;
 	box-sizing: border-box;
-	padding: 0 8px;
+	padding: 0 5px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
 	background: var(--background-secondary);
@@ -593,13 +595,13 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-custom-color-shades {
 	display: grid;
 	grid-template-columns: repeat(6, minmax(0, 1fr));
-	gap: 6px;
+	gap: 3px;
 }
 
 .draw-in-canvas-custom-color-shade {
 	box-sizing: border-box;
 	width: 100%;
-	height: 22px;
+	height: 16px;
 	padding: 0;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 999px;
@@ -616,14 +618,14 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .draw-in-canvas-custom-color-shade.is-selected {
-	box-shadow: 0 0 0 2px var(--background-primary), 0 0 0 4px var(--interactive-accent);
+	box-shadow: 0 0 0 1px var(--background-primary), 0 0 0 3px var(--interactive-accent);
 }
 
 .draw-in-canvas-color-palette-tabs {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 4px;
-	padding-top: 8px;
+	gap: 2px;
+	padding-top: 5px;
 	border-top: 1px solid var(--background-modifier-border);
 }
 
@@ -631,8 +633,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: grid;
 	place-items: center;
 	min-width: 0;
-	height: 30px;
-	padding: 0 8px;
+	height: 24px;
+	padding: 0 5px;
 	border: 0;
 	border-radius: var(--radius-s);
 	appearance: none;
