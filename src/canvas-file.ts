@@ -7,6 +7,7 @@ import {
 	DRAWING_DATA_VERSION,
 	JsonCanvasDocument,
 	StrokePoint,
+	normalizeStrokePressure,
 	createEmptyDrawingData,
 	createStrokeId,
 } from "./types";
@@ -78,10 +79,17 @@ function toStrokePoint(value: unknown): StrokePoint | null {
 		return null;
 	}
 
-	return {
+	const pressure = normalizeStrokePressure(value.pressure);
+	const point: StrokePoint = {
 		x: value.x,
 		y: value.y,
 	};
+
+	if (pressure !== undefined) {
+		point.pressure = pressure;
+	}
+
+	return point;
 }
 
 function toPositiveNumber(value: unknown, fallback: number): number {

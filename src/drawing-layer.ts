@@ -23,6 +23,7 @@ import {
 	CanvasDrawingData,
 	CanvasStroke,
 	StrokePoint,
+	normalizeStrokePressure,
 	createEmptyDrawingData,
 	createStrokeId,
 	pointsToSvgPath,
@@ -40,6 +41,9 @@ const MIN_RESIZE_SCALE = 0.05;
 const RESIZE_SCALE_EPSILON = 0.001;
 const SAVE_DEBOUNCE_MS = 300;
 const TOOLBAR_LONG_PRESS_MS = 450;
+const ACTIVE_STROKE_PREVIEW_WINDOW_SIZE = 160;
+const ACTIVE_STROKE_PREVIEW_CHUNK_SIZE = 96;
+const ACTIVE_STROKE_PREVIEW_OVERLAP = 8;
 const PRESET_STROKE_COLORS = [
 	{name: "Red", value: "#ef4444"},
 	{name: "Orange", value: "#f97316"},
@@ -74,6 +78,13 @@ interface RgbColor {
 
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 type BrushSliderSetting = "size" | "opacity";
+type CanvasPointMapper = (event: PointerEvent) => StrokePoint;
+
+interface StrokeRenderOptions {
+	hasPressure?: boolean;
+	isStart?: boolean;
+	isEnd?: boolean;
+}
 
 type DrawingHistoryAction =
 	| {type: "add-stroke"; stroke: CanvasStroke}
@@ -183,6 +194,10 @@ export class DrawingLayer {
 	private activeStrokeGroupEl: SVGGElement | null = null;
 	private activeStrokePathEl: SVGPathElement | null = null;
 	private activeStrokePreviewFrameId: number | null = null;
+	private activeStrokePointerId: number | null = null;
+	private activeStrokeHasPressure = false;
+	private activeStrokePreviewCommittedPointIndex = 0;
+	private readonly activeStrokePreviewChunkPathEls: SVGPathElement[] = [];
 	private readonly selectedStrokeIds = new Set<string>();
 	private selectionBoxEl: SVGRectElement | null = null;
 	private readonly selectionHandleEls: SVGRectElement[] = [];
@@ -332,6 +347,7 @@ export class DrawingLayer {
 
 		if (shouldRerenderStrokes) {
 			if (this.activeStroke) {
+				this.resetActiveStrokePreviewState();
 				this.updateActiveStrokePreview();
 			} else {
 				this.renderStrokes();
@@ -1501,14 +1517,21 @@ export class DrawingLayer {
 		return pathEl;
 	}
 
-	private updateVisibleStrokePathEl(pathEl: SVGPathElement, stroke: CanvasStroke, isComplete = true): void {
-		pathEl.classList.toggle("mod-handwritten", this.settings.beautifulStrokes);
+	private updateVisibleStrokePathEl(
+		pathEl: SVGPathElement,
+		stroke: CanvasStroke,
+		isComplete = true,
+		options: StrokeRenderOptions = {},
+	): void {
+		const hasPressure = options.hasPressure ?? strokeHasPressure(stroke);
+		const shouldUseHandwrittenPath = this.shouldUseHandwrittenStrokePath(stroke, hasPressure);
+		pathEl.classList.toggle("mod-handwritten", shouldUseHandwrittenPath);
 		pathEl.setAttribute("pointer-events", "none");
 		pathEl.setAttribute("opacity", formatStrokeOpacityRatio(stroke.opacity));
 		this.applyStrokeHardness(pathEl, stroke);
 
-		if (this.settings.beautifulStrokes) {
-			pathEl.setAttribute("d", this.getHandwrittenStrokeShapePath(stroke, isComplete));
+		if (shouldUseHandwrittenPath) {
+			pathEl.setAttribute("d", this.getHandwrittenStrokeShapePath(stroke, isComplete, hasPressure, options));
 			pathEl.setAttribute("fill", stroke.color);
 			pathEl.setAttribute("stroke", "none");
 			pathEl.removeAttribute("stroke-width");
@@ -1546,26 +1569,37 @@ export class DrawingLayer {
 	}
 
 
+	private shouldUseHandwrittenStrokePath(stroke: CanvasStroke, hasPressure = strokeHasPressure(stroke)): boolean {
+		return this.settings.beautifulStrokes || hasPressure;
+	}
+
 	private getStrokeCenterPath(stroke: CanvasStroke): string {
 		return pointsToSvgPath(stroke.points, {smooth: this.settings.beautifulStrokes});
 	}
 
-	private getHandwrittenStrokeShapePath(stroke: CanvasStroke, isComplete: boolean): string {
+	private getHandwrittenStrokeShapePath(
+		stroke: CanvasStroke,
+		isComplete: boolean,
+		hasPressure = strokeHasPressure(stroke),
+		options: StrokeRenderOptions = {},
+	): string {
+		const isStart = options.isStart ?? true;
+		const isEnd = options.isEnd ?? true;
 		const outlinePoints = getStroke(stroke.points, {
 			size: stroke.width,
 			thinning: this.settings.strokeThinning,
 			streamline: this.settings.strokeStreamline,
 			smoothing: this.settings.strokeSmoothing,
-			simulatePressure: true,
+			simulatePressure: !hasPressure,
 			start: {
-				cap: this.settings.strokeTaperStart === 0,
-				taper: this.settings.strokeTaperStart,
+				cap: isStart && this.settings.strokeTaperStart === 0,
+				taper: isStart ? this.settings.strokeTaperStart : 0,
 			},
 			end: {
-				cap: this.settings.strokeTaperEnd === 0,
-				taper: this.settings.strokeTaperEnd,
+				cap: isEnd && this.settings.strokeTaperEnd === 0,
+				taper: isEnd ? this.settings.strokeTaperEnd : 0,
 			},
-			last: isComplete,
+			last: isComplete && isEnd,
 		});
 
 		return getSvgPathFromStroke(outlinePoints);
@@ -1611,37 +1645,33 @@ export class DrawingLayer {
 		this.activeStroke = stroke;
 		this.activeStrokeGroupEl = strokeGroupEl;
 		this.activeStrokePathEl = activeStrokePathEl;
+		this.activeStrokePointerId = event.pointerId;
+		this.activeStrokeHasPressure = point.pressure !== undefined;
+		this.initializeActiveStrokePreviewState();
 		this.addStroke(stroke);
 		this.svgEl.appendChild(strokeGroupEl);
 	};
 
 	private readonly handlePointerMove = (event: PointerEvent): void => {
-		if (!this.activeStroke || !this.activeStrokeGroupEl) {
+		if (!this.activeStroke || !this.activeStrokeGroupEl || event.pointerId !== this.activeStrokePointerId) {
 			return;
 		}
 
-		const point = this.clientPointToCanvasPoint(event);
-
-		if (!point) {
-			return;
-		}
-
-		const previousPoint = this.activeStroke.points[this.activeStroke.points.length - 1];
-
-		if (!previousPoint || distanceBetween(previousPoint, point) < MIN_POINT_DISTANCE) {
+		if (!this.appendActiveStrokePointerPoints(event)) {
 			return;
 		}
 
 		event.preventDefault();
 		event.stopPropagation();
-		this.activeStroke.points.push(point);
 		this.scheduleActiveStrokePreviewUpdate();
 	};
 
 	private readonly handlePointerUp = (event: PointerEvent): void => {
-		if (!this.activeStroke) {
+		if (!this.activeStroke || event.pointerId !== this.activeStrokePointerId) {
 			return;
 		}
+
+		this.appendActiveStrokePointerPoints(event);
 
 		event.preventDefault();
 		event.stopPropagation();
@@ -1652,6 +1682,47 @@ export class DrawingLayer {
 
 		this.finishActiveStroke();
 	};
+
+	private appendActiveStrokePointerPoints(event: PointerEvent): boolean {
+		const activeStroke = this.activeStroke;
+
+		if (!activeStroke) {
+			return false;
+		}
+
+		const toCanvasPoint = this.createCanvasPointMapper();
+
+		if (!toCanvasPoint) {
+			return false;
+		}
+
+		let didAppendPoint = false;
+		const appendPointerEventPoint = (pointerEvent: PointerEvent): void => {
+			const point = toCanvasPoint(pointerEvent);
+			const previousPoint = activeStroke.points[activeStroke.points.length - 1];
+
+			if (!previousPoint || distanceBetween(previousPoint, point) < MIN_POINT_DISTANCE) {
+				return;
+			}
+
+			activeStroke.points.push(point);
+			if (point.pressure !== undefined) {
+				this.activeStrokeHasPressure = true;
+			}
+			didAppendPoint = true;
+		};
+		const coalescedEvents = getCoalescedPointerEvents(event);
+
+		for (const pointerEvent of coalescedEvents) {
+			appendPointerEventPoint(pointerEvent);
+		}
+
+		if (coalescedEvents.length === 0 || coalescedEvents[coalescedEvents.length - 1] !== event) {
+			appendPointerEventPoint(event);
+		}
+
+		return didAppendPoint;
+	}
 
 	private scheduleActiveStrokePreviewUpdate(): void {
 		if (this.activeStrokePreviewFrameId !== null) {
@@ -1669,7 +1740,119 @@ export class DrawingLayer {
 			return;
 		}
 
-		this.updateVisibleStrokePathEl(this.activeStrokePathEl, this.activeStroke, false);
+		const hasPressure = this.activeStrokeHasPressure;
+
+		if (this.shouldUseHandwrittenStrokePath(this.activeStroke, hasPressure)) {
+			this.updateHandwrittenActiveStrokePreview(this.activeStroke, hasPressure);
+			return;
+		}
+
+		this.updateLinearActiveStrokePreview(this.activeStroke);
+	}
+
+	private initializeActiveStrokePreviewState(): void {
+		this.resetActiveStrokePreviewState();
+	}
+
+	private resetActiveStrokePreviewState(): void {
+		for (const pathEl of this.activeStrokePreviewChunkPathEls.splice(0)) {
+			pathEl.remove();
+		}
+
+		this.activeStrokePreviewCommittedPointIndex = 0;
+	}
+
+	private updateLinearActiveStrokePreview(stroke: CanvasStroke): void {
+		if (!this.activeStrokePathEl) {
+			return;
+		}
+
+		this.flushLinearActiveStrokePreviewChunks(stroke);
+
+		const tailStartIndex = Math.max(0, this.activeStrokePreviewCommittedPointIndex - 1);
+		const tailStroke = getStrokePointSubset(stroke, tailStartIndex, stroke.points.length);
+		this.updateLinearStrokePathEl(this.activeStrokePathEl, tailStroke);
+	}
+
+	private flushLinearActiveStrokePreviewChunks(stroke: CanvasStroke): void {
+		if (!this.activeStrokeGroupEl || !this.activeStrokePathEl) {
+			return;
+		}
+
+		while (stroke.points.length - this.activeStrokePreviewCommittedPointIndex > ACTIVE_STROKE_PREVIEW_WINDOW_SIZE + ACTIVE_STROKE_PREVIEW_CHUNK_SIZE) {
+			const chunkStartIndex = this.activeStrokePreviewCommittedPointIndex;
+			const chunkEndIndex = Math.min(chunkStartIndex + ACTIVE_STROKE_PREVIEW_CHUNK_SIZE, stroke.points.length);
+
+			if (chunkEndIndex - chunkStartIndex < 2) {
+				return;
+			}
+
+			const chunkStroke = getStrokePointSubset(stroke, chunkStartIndex, chunkEndIndex);
+			const chunkPathEl = document.createElementNS(SVG_NS, "path");
+			chunkPathEl.classList.add("draw-in-canvas-stroke");
+			this.updateLinearStrokePathEl(chunkPathEl, chunkStroke);
+
+			this.activeStrokeGroupEl.insertBefore(chunkPathEl, this.activeStrokePathEl);
+			this.activeStrokePreviewChunkPathEls.push(chunkPathEl);
+			this.activeStrokePreviewCommittedPointIndex = chunkEndIndex;
+		}
+	}
+
+	private updateLinearStrokePathEl(pathEl: SVGPathElement, stroke: CanvasStroke): void {
+		pathEl.classList.remove("mod-handwritten");
+		pathEl.setAttribute("pointer-events", "none");
+		pathEl.setAttribute("opacity", formatStrokeOpacityRatio(stroke.opacity));
+		this.applyStrokeHardness(pathEl, stroke);
+		pathEl.setAttribute("d", this.getStrokeCenterPath(stroke));
+		pathEl.setAttribute("stroke", stroke.color);
+		pathEl.setAttribute("stroke-width", stroke.width.toString());
+		pathEl.setAttribute("fill", "none");
+		pathEl.setAttribute("stroke-linecap", "round");
+		pathEl.setAttribute("stroke-linejoin", "round");
+	}
+
+	private updateHandwrittenActiveStrokePreview(stroke: CanvasStroke, hasPressure: boolean): void {
+		if (!this.activeStrokePathEl) {
+			return;
+		}
+
+		this.flushActiveStrokePreviewChunks(stroke, hasPressure);
+
+		const tailStartIndex = Math.max(0, this.activeStrokePreviewCommittedPointIndex - ACTIVE_STROKE_PREVIEW_OVERLAP);
+		const tailStroke = getStrokePointSubset(stroke, tailStartIndex, stroke.points.length);
+		this.updateVisibleStrokePathEl(this.activeStrokePathEl, tailStroke, false, {
+			hasPressure,
+			isStart: tailStartIndex === 0,
+			isEnd: true,
+		});
+	}
+
+	private flushActiveStrokePreviewChunks(stroke: CanvasStroke, hasPressure: boolean): void {
+		if (!this.activeStrokeGroupEl || !this.activeStrokePathEl) {
+			return;
+		}
+
+		while (stroke.points.length - this.activeStrokePreviewCommittedPointIndex > ACTIVE_STROKE_PREVIEW_WINDOW_SIZE + ACTIVE_STROKE_PREVIEW_CHUNK_SIZE) {
+			const chunkStartIndex = this.activeStrokePreviewCommittedPointIndex;
+			const chunkEndIndex = Math.min(chunkStartIndex + ACTIVE_STROKE_PREVIEW_CHUNK_SIZE, stroke.points.length);
+
+			if (chunkEndIndex - chunkStartIndex < 2) {
+				return;
+			}
+
+			const chunkStroke = getStrokePointSubset(stroke, chunkStartIndex, chunkEndIndex);
+			const chunkPathEl = document.createElementNS(SVG_NS, "path");
+			chunkPathEl.classList.add("draw-in-canvas-stroke");
+			this.updateVisibleStrokePathEl(chunkPathEl, chunkStroke, false, {
+				hasPressure,
+				isStart: chunkStartIndex === 0,
+				isEnd: false,
+			});
+
+			this.activeStrokeGroupEl.insertBefore(chunkPathEl, this.activeStrokePathEl);
+			this.activeStrokePreviewChunkPathEls.push(chunkPathEl);
+			this.activeStrokePreviewCommittedPointIndex = chunkEndIndex;
+		}
 	}
 
 	private cancelActiveStrokePreviewUpdate(): void {
@@ -2750,10 +2933,14 @@ export class DrawingLayer {
 		const firstPoint = completedStroke.points[0];
 
 		if (firstPoint && completedStroke.points.length === 1) {
-			const dotEndPoint = {
+			const dotEndPoint: StrokePoint = {
 				x: roundCoordinate(firstPoint.x + 0.01),
 				y: roundCoordinate(firstPoint.y + 0.01),
 			};
+
+			if (firstPoint.pressure !== undefined) {
+				dotEndPoint.pressure = firstPoint.pressure;
+			}
 
 			completedStroke.points.push(dotEndPoint);
 		}
@@ -2763,6 +2950,9 @@ export class DrawingLayer {
 		this.activeStroke = null;
 		this.activeStrokeGroupEl = null;
 		this.activeStrokePathEl = null;
+		this.activeStrokePointerId = null;
+		this.activeStrokeHasPressure = false;
+		this.resetActiveStrokePreviewState();
 		this.pushHistory({type: "add-stroke", stroke: cloneStroke(completedStroke)});
 		this.scheduleSave();
 	}
@@ -3239,6 +3429,10 @@ export class DrawingLayer {
 	}
 
 	private clientPointToCanvasPoint(event: PointerEvent): StrokePoint | null {
+		return this.createCanvasPointMapper()?.(event) ?? null;
+	}
+
+	private createCanvasPointMapper(): CanvasPointMapper | null {
 		if (!this.svgEl) {
 			return null;
 		}
@@ -3246,22 +3440,19 @@ export class DrawingLayer {
 		const matrix = this.svgEl.getScreenCTM();
 
 		if (matrix) {
+			const inverseMatrix = matrix.inverse();
 			const point = this.svgEl.createSVGPoint();
-			point.x = event.clientX;
-			point.y = event.clientY;
-			const canvasPoint = point.matrixTransform(matrix.inverse());
 
-			return {
-				x: roundCoordinate(canvasPoint.x),
-				y: roundCoordinate(canvasPoint.y),
+			return (event: PointerEvent) => {
+				point.x = event.clientX;
+				point.y = event.clientY;
+				const canvasPoint = point.matrixTransform(inverseMatrix);
+				return createStrokePoint(canvasPoint.x, canvasPoint.y, event);
 			};
 		}
 
 		const rect = this.svgEl.getBoundingClientRect();
-		return {
-			x: roundCoordinate(event.clientX - rect.left),
-			y: roundCoordinate(event.clientY - rect.top),
-		};
+		return (event: PointerEvent) => createStrokePoint(event.clientX - rect.left, event.clientY - rect.top, event);
 	}
 
 	private scheduleSave(): void {
@@ -3671,6 +3862,48 @@ function getStrokeHardnessBlurRadius(stroke: CanvasStroke): number {
 	return roundCoordinate(Math.max(0, stroke.width * softness * 0.35));
 }
 
+function createStrokePoint(x: number, y: number, event: PointerEvent): StrokePoint {
+	const point: StrokePoint = {
+		x: roundCoordinate(x),
+		y: roundCoordinate(y),
+	};
+	const pressure = getPointerPressure(event);
+
+	if (pressure !== undefined) {
+		point.pressure = pressure;
+	}
+
+	return point;
+}
+
+function getPointerPressure(event: PointerEvent): number | undefined {
+	if (!shouldCapturePointerPressure(event)) {
+		return undefined;
+	}
+
+	return normalizeStrokePressure(event.pressure);
+}
+
+function shouldCapturePointerPressure(event: PointerEvent): boolean {
+	return event.pointerType === "pen";
+}
+
+function getCoalescedPointerEvents(event: PointerEvent): PointerEvent[] {
+	const coalescedEvents = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+	return coalescedEvents;
+}
+
+function getStrokePointSubset(stroke: CanvasStroke, startIndex: number, endIndex: number): CanvasStroke {
+	return {
+		...stroke,
+		points: stroke.points.slice(startIndex, endIndex),
+	};
+}
+
+function strokeHasPressure(stroke: CanvasStroke): boolean {
+	return stroke.points.some((point) => point.pressure !== undefined);
+}
+
 function hasSelectionModifier(event: MouseEvent | PointerEvent): boolean {
 	return event.shiftKey || event.ctrlKey || event.metaKey;
 }
@@ -3944,7 +4177,13 @@ function formatScale(value: number): string {
 }
 
 function clonePoint(point: StrokePoint): StrokePoint {
-	return {x: point.x, y: point.y};
+	const clonedPoint: StrokePoint = {x: point.x, y: point.y};
+
+	if (point.pressure !== undefined) {
+		clonedPoint.pressure = point.pressure;
+	}
+
+	return clonedPoint;
 }
 
 function clonePoints(points: readonly StrokePoint[]): StrokePoint[] {

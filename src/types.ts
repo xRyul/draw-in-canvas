@@ -4,6 +4,7 @@ export const DRAWING_DATA_VERSION = 1 as const;
 export interface StrokePoint {
 	x: number;
 	y: number;
+	pressure?: number;
 }
 
 export interface CanvasStroke {
@@ -40,6 +41,15 @@ export function createStrokeId(): string {
 
 export function roundCoordinate(value: number): number {
 	return Math.round(value * 100) / 100;
+}
+
+export function normalizeStrokePressure(value: unknown): number | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return undefined;
+	}
+
+	const clampedValue = Math.min(1, Math.max(0, value));
+	return Math.round(clampedValue * 1000) / 1000;
 }
 
 export function pointsToSvgPath(points: readonly StrokePoint[], options: {smooth?: boolean} = {}): string {

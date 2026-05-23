@@ -234,7 +234,7 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Handwritten strokes")
-			.setDesc("Smooth strokes with subtle tapered starts and ends for a more natural hand-drawn look.")
+			.setDesc("Smooth strokes with subtle tapered starts and ends. Pen strokes use real stylus pressure when available.")
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.beautifulStrokes)
 				.onChange((value) => {
