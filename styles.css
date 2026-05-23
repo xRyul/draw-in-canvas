@@ -482,32 +482,70 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	width: 100%;
 }
 
-.draw-in-canvas-stroke-width-preview {
+.draw-in-canvas-brush-preview {
 	position: fixed;
 	z-index: var(--layer-popover, 30);
-	display: grid;
-	place-items: center;
-	min-width: 24px;
-	min-height: 24px;
-	padding: 5px;
+	display: inline-grid;
+	grid-template-columns: 40px auto;
+	align-items: center;
+	box-sizing: border-box;
+	min-width: 112px;
+	max-width: 180px;
+	gap: 8px;
+	padding: 8px 10px 8px 8px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 999px;
-	background: var(--background-primary);
+	background: color-mix(in srgb, var(--background-primary) 94%, transparent);
 	box-shadow: var(--shadow-s);
+	color: var(--text-normal);
 	pointer-events: none;
-	transform: translate(12px, -50%);
 	user-select: none;
 }
 
-.draw-in-canvas-stroke-width-preview-dot {
+.draw-in-canvas-brush-preview-sample {
+	display: grid;
+	place-items: center;
+	width: 40px;
+	height: 40px;
+	border-radius: 50%;
+	background: var(--background-secondary);
+	box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+}
+
+.draw-in-canvas-brush-preview-dot {
 	display: block;
-	width: var(--draw-in-canvas-stroke-width-preview-size, 4px);
-	height: var(--draw-in-canvas-stroke-width-preview-size, 4px);
+	width: var(--draw-in-canvas-brush-preview-size, 4px);
+	height: var(--draw-in-canvas-brush-preview-size, 4px);
 	border: 1px solid var(--background-primary);
 	border-radius: 50%;
-	background: var(--draw-in-canvas-stroke-width-preview-color, currentColor);
-	opacity: var(--draw-in-canvas-stroke-width-preview-opacity, 1);
+	background: var(--draw-in-canvas-brush-preview-color, currentColor);
+	opacity: var(--draw-in-canvas-brush-preview-opacity, 1);
 	box-shadow: 0 0 0 1px var(--background-modifier-border);
+}
+
+.draw-in-canvas-brush-preview-text {
+	display: grid;
+	min-width: 0;
+	gap: 2px;
+}
+
+.draw-in-canvas-brush-preview-value,
+.draw-in-canvas-brush-preview-detail {
+	overflow: hidden;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.draw-in-canvas-brush-preview-value {
+	font-size: var(--font-ui-small);
+	font-weight: 600;
+}
+
+.draw-in-canvas-brush-preview-detail {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
 }
 
 .draw-in-canvas-control-item.is-active {

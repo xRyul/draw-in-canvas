@@ -59,7 +59,7 @@ const PRESET_STROKE_COLORS = [
 ] as const;
 const DEFAULT_CUSTOM_COLOR = "#8b5cf6";
 const CUSTOM_COLOR_SHADE_COUNT = 6;
-const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-width-preview";
+const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const COLOR_PALETTE_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
 
@@ -135,9 +135,10 @@ interface ToolbarPressState {
 	didOpenPalette: boolean;
 }
 
-interface StrokeWidthPreviewState {
+interface BrushPreviewState {
 	pointerId: number;
-	sliderEl: HTMLInputElement;
+	triggerEl: HTMLElement;
+	setting: BrushSliderSetting;
 	x: number;
 	y: number;
 }
@@ -184,8 +185,8 @@ export class DrawingLayer {
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
 	private shouldSelectCustomColorHexOnClick = false;
 	private toolbarPressState: ToolbarPressState | null = null;
-	private strokeWidthPreviewEl: HTMLElement | null = null;
-	private strokeWidthPreviewState: StrokeWidthPreviewState | null = null;
+	private brushPreviewEl: HTMLElement | null = null;
+	private brushPreviewState: BrushPreviewState | null = null;
 	private undoButtonEl: HTMLElement | null = null;
 	private redoButtonEl: HTMLElement | null = null;
 	private activeStroke: CanvasStroke | null = null;
@@ -216,7 +217,7 @@ export class DrawingLayer {
 	private readonly toolbarDisposers: Array<() => void> = [];
 	private readonly colorPaletteDisposers: Array<() => void> = [];
 	private readonly brushControlsDisposers: Array<() => void> = [];
-	private readonly strokeWidthPreviewDisposers: Array<() => void> = [];
+	private readonly brushPreviewDisposers: Array<() => void> = [];
 	private readonly renderDisposers: Array<() => void> = [];
 	private readonly strokeInteractionDisposers: Array<() => void> = [];
 	private readonly canvasHistoryButtonDisposers: Array<() => void> = [];
@@ -574,7 +575,7 @@ export class DrawingLayer {
 	}
 
 	private removeBrushControls(): void {
-		this.closeStrokeWidthPreview();
+		this.closeBrushPreview();
 
 		for (const dispose of this.brushControlsDisposers.splice(0)) {
 			dispose();
@@ -787,7 +788,7 @@ export class DrawingLayer {
 	}
 
 	private closeColorPalette(): void {
-		this.closeStrokeWidthPreview();
+		this.closeBrushPreview();
 		for (const dispose of this.colorPaletteDisposers.splice(0)) {
 			dispose();
 		}
@@ -1227,92 +1228,129 @@ export class DrawingLayer {
 		this.syncColorPaletteSelection();
 	}
 
-	private openStrokeWidthPreview(event: PointerEvent, sliderEl: HTMLInputElement): void {
-		this.closeStrokeWidthPreview();
-		this.strokeWidthPreviewState = {
+	private openBrushPreview(event: PointerEvent, triggerEl: HTMLElement, setting: BrushSliderSetting): void {
+		this.closeBrushPreview();
+		this.brushPreviewState = {
 			pointerId: event.pointerId,
-			sliderEl,
+			triggerEl,
+			setting,
 			x: event.clientX,
 			y: event.clientY,
 		};
 
-		trySetPointerCapture(sliderEl, event.pointerId);
-		this.strokeWidthPreviewDisposers.push(
-			this.addListener(document, "pointermove", this.handleStrokeWidthPreviewPointerMove, true),
-			this.addListener(document, "pointerup", this.handleStrokeWidthPreviewPointerUp, true),
-			this.addListener(document, "pointercancel", this.handleStrokeWidthPreviewPointerUp, true),
-			this.addListener(window, "blur", this.handleStrokeWidthPreviewWindowBlur),
+		trySetPointerCapture(triggerEl, event.pointerId);
+		this.brushPreviewDisposers.push(
+			this.addListener(document, "pointermove", this.handleBrushPreviewPointerMove, true),
+			this.addListener(document, "pointerup", this.handleBrushPreviewPointerUp, true),
+			this.addListener(document, "pointercancel", this.handleBrushPreviewPointerUp, true),
+			this.addListener(window, "blur", this.handleBrushPreviewWindowBlur),
 		);
 
-		this.positionStrokeWidthPreview(event.clientX, event.clientY);
-		this.updateStrokeWidthPreview(Number(sliderEl.value));
+		this.positionBrushPreview(event.clientX, event.clientY);
+		this.updateBrushPreview(setting);
 	}
 
-	private closeStrokeWidthPreview(): void {
-		for (const dispose of this.strokeWidthPreviewDisposers.splice(0)) {
+	private closeBrushPreview(): void {
+		for (const dispose of this.brushPreviewDisposers.splice(0)) {
 			dispose();
 		}
 
-		const state = this.strokeWidthPreviewState;
+		const state = this.brushPreviewState;
 
-		if (state?.sliderEl.hasPointerCapture(state.pointerId)) {
-			state.sliderEl.releasePointerCapture(state.pointerId);
+		if (state?.triggerEl.hasPointerCapture(state.pointerId)) {
+			state.triggerEl.releasePointerCapture(state.pointerId);
 		}
 
-		this.strokeWidthPreviewEl?.remove();
-		this.strokeWidthPreviewEl = null;
-		this.strokeWidthPreviewState = null;
+		this.brushPreviewEl?.remove();
+		this.brushPreviewEl = null;
+		this.brushPreviewState = null;
 	}
 
-	private positionStrokeWidthPreview(x: number, y: number): void {
-		const previewEl = this.ensureStrokeWidthPreviewEl();
-		const state = this.strokeWidthPreviewState;
+	private positionBrushPreview(x: number, y: number): void {
+		const previewEl = this.ensureBrushPreviewEl();
+		const state = this.brushPreviewState;
 
 		if (state) {
 			state.x = x;
 			state.y = y;
 		}
 
+		const previewRect = previewEl.getBoundingClientRect();
+		const margin = 8;
+		const gap = 18;
+		const previewWidth = previewRect.width || 96;
+		const previewHeight = previewRect.height || 56;
+		const left = Math.max(margin, Math.min(x + gap, window.innerWidth - previewWidth - margin));
+		const top = Math.max(margin, Math.min(y - previewHeight / 2, window.innerHeight - previewHeight - margin));
+
 		previewEl.setCssStyles({
-			left: `${x + 18}px`,
-			top: `${y + 18}px`,
+			left: `${left}px`,
+			top: `${top}px`,
 		});
 	}
 
-	private updateStrokeWidthPreview(width: number): void {
-		const state = this.strokeWidthPreviewState;
+	private updateBrushPreview(activeSetting = this.brushPreviewState?.setting ?? "size"): void {
+		const state = this.brushPreviewState;
 
 		if (!state) {
 			return;
 		}
 
-		const strokeWidth = normalizeStrokeWidth(width);
-		const previewEl = this.ensureStrokeWidthPreviewEl();
+		const strokeWidth = normalizeStrokeWidth(this.settings.strokeWidth);
+		const strokeOpacity = normalizeStrokeOpacity(this.settings.strokeOpacity);
+		const previewEl = this.ensureBrushPreviewEl();
+		const valueEl = previewEl.querySelector<HTMLElement>(".draw-in-canvas-brush-preview-value");
+		const detailEl = previewEl.querySelector<HTMLElement>(".draw-in-canvas-brush-preview-detail");
 
+		previewEl.dataset.brushPreviewSetting = activeSetting;
 		previewEl.setCssProps({
-			"--draw-in-canvas-stroke-width-preview-size": `${Math.max(4, strokeWidth)}px`,
-			"--draw-in-canvas-stroke-width-preview-color": this.settings.strokeColor,
-			"--draw-in-canvas-stroke-width-preview-opacity": formatStrokeOpacityRatio(this.settings.strokeOpacity),
+			"--draw-in-canvas-brush-preview-size": `${Math.max(4, strokeWidth)}px`,
+			"--draw-in-canvas-brush-preview-color": this.settings.strokeColor,
+			"--draw-in-canvas-brush-preview-opacity": formatStrokeOpacityRatio(strokeOpacity),
 		});
 
-		this.positionStrokeWidthPreview(state.x, state.y);
+		if (valueEl) {
+			valueEl.textContent = activeSetting === "opacity" ? formatStrokeOpacity(strokeOpacity) : formatStrokeWidth(strokeWidth);
+		}
+
+		if (detailEl) {
+			detailEl.textContent = activeSetting === "opacity"
+				? `${formatStrokeWidth(strokeWidth)} brush`
+				: `${formatStrokeOpacity(strokeOpacity)} opacity`;
+		}
+
+		this.positionBrushPreview(state.x, state.y);
 	}
 
-	private ensureStrokeWidthPreviewEl(): HTMLElement {
-		if (this.strokeWidthPreviewEl?.isConnected) {
-			return this.strokeWidthPreviewEl;
+	private ensureBrushPreviewEl(): HTMLElement {
+		if (this.brushPreviewEl?.isConnected) {
+			return this.brushPreviewEl;
 		}
 
 		const previewEl = document.createElement("div");
-		previewEl.classList.add("draw-in-canvas-stroke-width-preview");
+		previewEl.classList.add("draw-in-canvas-brush-preview");
 		previewEl.setAttribute("aria-hidden", "true");
 
-		const dotEl = document.createElement("span");
-		dotEl.classList.add("draw-in-canvas-stroke-width-preview-dot");
+		const sampleEl = document.createElement("span");
+		sampleEl.classList.add("draw-in-canvas-brush-preview-sample");
 
-		previewEl.append(dotEl);
+		const dotEl = document.createElement("span");
+		dotEl.classList.add("draw-in-canvas-brush-preview-dot");
+		sampleEl.appendChild(dotEl);
+
+		const textEl = document.createElement("span");
+		textEl.classList.add("draw-in-canvas-brush-preview-text");
+
+		const valueEl = document.createElement("span");
+		valueEl.classList.add("draw-in-canvas-brush-preview-value");
+
+		const detailEl = document.createElement("span");
+		detailEl.classList.add("draw-in-canvas-brush-preview-detail");
+
+		textEl.append(valueEl, detailEl);
+		previewEl.append(sampleEl, textEl);
 		document.body.appendChild(previewEl);
-		this.strokeWidthPreviewEl = previewEl;
+		this.brushPreviewEl = previewEl;
 		return previewEl;
 	}
 
@@ -2095,7 +2133,7 @@ export class DrawingLayer {
 		}
 
 		event.currentTarget.focus({preventScroll: true});
-		this.openStrokeWidthPreview(event, event.currentTarget);
+		this.openBrushPreview(event, event.currentTarget, "size");
 	};
 
 	private readonly handleBrushSliderPointerDown = (event: PointerEvent): void => {
@@ -2103,10 +2141,16 @@ export class DrawingLayer {
 			return;
 		}
 
+		const setting = getBrushSliderSetting(event.currentTarget.dataset.brushSlider);
+
+		if (!setting) {
+			return;
+		}
+
 		event.preventDefault();
 		event.stopPropagation();
 		event.currentTarget.focus({preventScroll: true});
-		trySetPointerCapture(event.currentTarget, event.pointerId);
+		this.openBrushPreview(event, event.currentTarget, setting);
 		this.updateBrushSliderFromPointer(event.currentTarget, event);
 	};
 
@@ -2121,13 +2165,13 @@ export class DrawingLayer {
 	};
 
 	private readonly handleBrushSliderPointerUp = (event: PointerEvent): void => {
-		if (!(event.currentTarget instanceof HTMLElement) || !event.currentTarget.hasPointerCapture(event.pointerId)) {
+		if (!(event.currentTarget instanceof HTMLElement)) {
 			return;
 		}
 
 		event.preventDefault();
 		event.stopPropagation();
-		event.currentTarget.releasePointerCapture(event.pointerId);
+		this.closeBrushPreview();
 	};
 
 	private readonly handleBrushSliderKeyDown = (event: KeyboardEvent): void => {
@@ -2188,11 +2232,13 @@ export class DrawingLayer {
 		if (setting === "size") {
 			const strokeWidth = normalizeStrokeWidth(value);
 			this.setStrokeWidth(strokeWidth);
-			this.updateStrokeWidthPreview(strokeWidth);
+			this.updateBrushPreview("size");
 			return;
 		}
 
-		this.setStrokeOpacity(value);
+		const strokeOpacity = normalizeStrokeOpacity(value);
+		this.setStrokeOpacity(strokeOpacity);
+		this.updateBrushPreview("opacity");
 	}
 
 	private readonly handleStrokeWidthSliderKeyDown = (event: KeyboardEvent): void => {
@@ -2208,7 +2254,7 @@ export class DrawingLayer {
 
 		const strokeWidth = Number(event.currentTarget.value);
 		this.setStrokeWidth(strokeWidth);
-		this.updateStrokeWidthPreview(strokeWidth);
+		this.updateBrushPreview("size");
 	};
 
 	private readonly handleStrokeHardnessSliderInput = (event: Event): void => {
@@ -2229,6 +2275,7 @@ export class DrawingLayer {
 		}
 
 		this.setStrokeOpacity(Number(event.currentTarget.value));
+		this.updateBrushPreview("opacity");
 	};
 
 	private readonly handleFreehandSliderInput = (event: Event): void => {
@@ -2263,29 +2310,29 @@ export class DrawingLayer {
 		this.resetFreehandSliderValues();
 	};
 
-	private readonly handleStrokeWidthPreviewPointerMove = (event: PointerEvent): void => {
-		const state = this.strokeWidthPreviewState;
+	private readonly handleBrushPreviewPointerMove = (event: PointerEvent): void => {
+		const state = this.brushPreviewState;
 
 		if (!state || state.pointerId !== event.pointerId) {
 			return;
 		}
 
-		this.positionStrokeWidthPreview(event.clientX, event.clientY);
-		this.updateStrokeWidthPreview(Number(state.sliderEl.value));
+		this.positionBrushPreview(event.clientX, event.clientY);
+		this.updateBrushPreview(state.setting);
 	};
 
-	private readonly handleStrokeWidthPreviewPointerUp = (event: PointerEvent): void => {
-		const state = this.strokeWidthPreviewState;
+	private readonly handleBrushPreviewPointerUp = (event: PointerEvent): void => {
+		const state = this.brushPreviewState;
 
 		if (!state || state.pointerId !== event.pointerId) {
 			return;
 		}
 
-		this.closeStrokeWidthPreview();
+		this.closeBrushPreview();
 	};
 
-	private readonly handleStrokeWidthPreviewWindowBlur = (): void => {
-		this.closeStrokeWidthPreview();
+	private readonly handleBrushPreviewWindowBlur = (): void => {
+		this.closeBrushPreview();
 	};
 
 	private readonly handleColorPaletteDocumentPointerDown = (event: PointerEvent): void => {
