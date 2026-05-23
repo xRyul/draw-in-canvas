@@ -792,6 +792,24 @@ export class DrawingLayer {
 		}
 	}
 
+	private toggleColorPalette(): void {
+		if (this.colorPaletteEl?.isConnected) {
+			this.closeColorPalette();
+			return;
+		}
+
+		this.openColorPalette();
+	}
+
+	private toggleStrokeSettingsPalette(): void {
+		if (this.strokeSettingsPaletteEl?.isConnected) {
+			this.closeStrokeSettingsPalette();
+			return;
+		}
+
+		this.openStrokeSettingsPalette();
+	}
+
 	private openColorPalette(): void {
 		if (!this.isDrawingEnabled()) {
 			this.enableDrawingMode();
@@ -1041,14 +1059,16 @@ export class DrawingLayer {
 	}
 
 	private syncColorPaletteExpandedState(): void {
-		const isOpen = (this.colorPaletteEl?.isConnected ?? false).toString();
-		this.toolbarButtonEl?.setAttribute("aria-expanded", isOpen);
-		this.brushColorButtonEl?.setAttribute("aria-expanded", isOpen);
+		const isOpen = this.colorPaletteEl?.isConnected ?? false;
+		this.toolbarButtonEl?.setAttribute("aria-expanded", isOpen.toString());
+		this.brushColorButtonEl?.setAttribute("aria-expanded", isOpen.toString());
+		this.brushColorButtonEl?.setAttribute("aria-label", isOpen ? "Close stroke color" : "Open stroke color");
 	}
 
 	private syncStrokeSettingsPaletteExpandedState(): void {
-		const isOpen = (this.strokeSettingsPaletteEl?.isConnected ?? false).toString();
-		this.brushSettingsButtonEl?.setAttribute("aria-expanded", isOpen);
+		const isOpen = this.strokeSettingsPaletteEl?.isConnected ?? false;
+		this.brushSettingsButtonEl?.setAttribute("aria-expanded", isOpen.toString());
+		this.brushSettingsButtonEl?.setAttribute("aria-label", isOpen ? "Close stroke and handwriting settings" : "Open stroke and handwriting settings");
 	}
 
 	private syncColorPaletteSelection(): void {
@@ -2677,7 +2697,7 @@ export class DrawingLayer {
 				}
 
 				pressState.didOpenPalette = true;
-				this.openColorPalette();
+				this.toggleColorPalette();
 			}, TOOLBAR_LONG_PRESS_MS),
 			didOpenPalette: false,
 		};
@@ -2721,7 +2741,7 @@ export class DrawingLayer {
 		if (event.key === "ArrowDown") {
 			event.preventDefault();
 			event.stopPropagation();
-			this.openColorPalette();
+			this.toggleColorPalette();
 			return;
 		}
 
@@ -3126,13 +3146,13 @@ export class DrawingLayer {
 	private readonly handleBrushColorButtonClick = (event: MouseEvent): void => {
 		event.preventDefault();
 		event.stopPropagation();
-		this.openColorPalette();
+		this.toggleColorPalette();
 	};
 
 	private readonly handleBrushSettingsButtonClick = (event: MouseEvent): void => {
 		event.preventDefault();
 		event.stopPropagation();
-		this.openStrokeSettingsPalette();
+		this.toggleStrokeSettingsPalette();
 	};
 
 	private updateBrushSliderFromPointer(sliderEl: HTMLElement, event: PointerEvent): void {
