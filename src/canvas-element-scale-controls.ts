@@ -1,5 +1,11 @@
 import {setIcon} from "obsidian";
 import type {CanvasTarget} from "./canvas-target";
+import {
+	hasLayerOrderChanged,
+	orderItemsByIds,
+	reorderIdsByLayerAction,
+	type LayerAction,
+} from "./layering";
 
 // Obsidian's Canvas API is internal, so keep native canvas element menu patches isolated here.
 
@@ -8,6 +14,23 @@ const TINY_CANVAS_MIN_DIMENSION = 1;
 const SCALE_BUTTON_CLASS = "draw-in-canvas-scale-button";
 const SCALE_BUTTON_GROW_CLASS = "draw-in-canvas-scale-grow-button";
 const SCALE_BUTTON_SHRINK_CLASS = "draw-in-canvas-scale-shrink-button";
+const NATIVE_LAYER_MENU_CLASS = "draw-in-canvas-native-layer-menu";
+const LAYER_MENU_CLASS = "draw-in-canvas-layer-menu";
+const LAYER_MENU_BUTTON_CLASS = "draw-in-canvas-layer-menu-button";
+const LAYER_SUBMENU_BUTTON_CLASS = "draw-in-canvas-layer-submenu-button";
+const NATIVE_CONTROL_SELECTOR = `.${SCALE_BUTTON_CLASS}, .${NATIVE_LAYER_MENU_CLASS}`;
+const NATIVE_LAYER_ACTIONS = [
+	"send-to-back",
+	"send-backward",
+	"bring-forward",
+	"bring-to-front",
+] as const satisfies readonly LayerAction[];
+const NATIVE_LAYER_BUTTON_CONFIGS: Record<LayerAction, {label: string; icon: string}> = {
+	"send-to-back": {label: "Send selected canvas item to back", icon: "arrow-down-to-line"},
+	"send-backward": {label: "Send selected canvas item backward", icon: "arrow-down"},
+	"bring-forward": {label: "Bring selected canvas item forward", icon: "arrow-up"},
+	"bring-to-front": {label: "Bring selected canvas item to front", icon: "arrow-up-to-line"},
+};
 const CONTENT_SCALE_DATA_KEY = "drawInCanvasScale";
 const CONTENT_SCALE_CLASS = "draw-in-canvas-scaled-node-content";
 const DEFAULT_CONTENT_SCALE = 1;
@@ -61,6 +84,8 @@ interface NativeCanvasNode extends NativeCanvasRect {
 	getData?: () => NativeCanvasNodeData;
 	getBBox?: () => NativeCanvasBounds;
 	render?: () => void;
+	zIndex?: number;
+	renderZIndex?: () => void;
 }
 
 interface NativeCanvasMenu {
@@ -74,6 +99,7 @@ interface NativeCanvasInstance {
 	menu?: NativeCanvasMenu;
 	requestSave?: (pushHistory?: boolean) => void;
 	requestFrame?: () => void;
+	zIndexCounter?: number;
 }
 
 type CanvasViewWithCanvas = CanvasTarget["view"] & {
@@ -87,6 +113,7 @@ const aspectRatioResizePatches = new WeakMap<NativeCanvasNodeResizePrototype, As
 export class NativeCanvasElementScaleControls {
 	private enabled = false;
 	private readonly buttonEls: HTMLButtonElement[] = [];
+	private layerMenuEl: HTMLElement | null = null;
 	private readonly buttonDisposers: Array<() => void> = [];
 	private readonly releaseResizePatches = new Map<NativeCanvasNodeResizePrototype, () => void>();
 	private hasSyncedContentScales = false;
@@ -140,7 +167,7 @@ export class NativeCanvasElementScaleControls {
 
 		const menuEl = this.findNativeMenuEl();
 
-		if (!menuEl || getSelectedResizableNodes(canvas).length === 0) {
+		if (!menuEl || getSelectedCanvasNodes(canvas).length === 0) {
 			this.removeControls();
 			return;
 		}
@@ -148,6 +175,7 @@ export class NativeCanvasElementScaleControls {
 		this.removeStaleControls(menuEl);
 
 		if (this.areControlsMountedIn(menuEl)) {
+			this.syncLayerMenuButtonStates(canvas);
 			return;
 		}
 
@@ -155,8 +183,10 @@ export class NativeCanvasElementScaleControls {
 
 		const growButtonEl = this.createScaleButton("grow");
 		const shrinkButtonEl = this.createScaleButton("shrink");
+		const layerMenuEl = this.createLayerMenuEl(canvas);
 		this.buttonEls.push(growButtonEl, shrinkButtonEl);
-		this.insertButtons(menuEl, growButtonEl, shrinkButtonEl);
+		this.layerMenuEl = layerMenuEl;
+		this.insertControls(menuEl, growButtonEl, shrinkButtonEl, layerMenuEl);
 	}
 
 	dispose(): void {
@@ -167,7 +197,10 @@ export class NativeCanvasElementScaleControls {
 	}
 
 	getOwnedElements(): Element[] {
-		return this.buttonEls.filter((buttonEl) => buttonEl.isConnected);
+		return [
+			...this.buttonEls.filter((buttonEl) => buttonEl.isConnected),
+			...(this.layerMenuEl?.isConnected ? [this.layerMenuEl] : []),
+		];
 	}
 
 	private createScaleButton(direction: ScaleDirection): HTMLButtonElement {
@@ -187,25 +220,79 @@ export class NativeCanvasElementScaleControls {
 		return buttonEl;
 	}
 
-	private insertButtons(menuEl: HTMLElement, growButtonEl: HTMLButtonElement, shrinkButtonEl: HTMLButtonElement): void {
+	private createLayerMenuEl(canvas: NativeCanvasInstance): HTMLElement {
+		const wrapperEl = document.createElement("div");
+		wrapperEl.classList.add(LAYER_MENU_CLASS, NATIVE_LAYER_MENU_CLASS);
+
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("clickable-icon", LAYER_MENU_BUTTON_CLASS);
+		buttonEl.setAttribute("aria-label", "Layer selected canvas item");
+		buttonEl.setAttribute("aria-haspopup", "menu");
+		buttonEl.setAttribute("aria-expanded", "false");
+		buttonEl.setAttribute("data-tooltip-position", "top");
+		setIcon(buttonEl, "layers");
+
+		const submenuEl = document.createElement("div");
+		submenuEl.classList.add("canvas-menu", "draw-in-canvas-layer-submenu");
+		submenuEl.setAttribute("role", "menu");
+		submenuEl.append(...NATIVE_LAYER_ACTIONS.map((action) => this.createLayerActionButton(canvas, action)));
+
+		wrapperEl.append(buttonEl, submenuEl);
+		this.buttonDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleButtonPointerDown),
+			this.addListener(buttonEl, "click", (event: MouseEvent) => this.handleLayerMenuButtonClick(event, wrapperEl, buttonEl)),
+		);
+
+		return wrapperEl;
+	}
+
+	private createLayerActionButton(canvas: NativeCanvasInstance, action: LayerAction): HTMLButtonElement {
+		const buttonConfig = NATIVE_LAYER_BUTTON_CONFIGS[action];
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("clickable-icon", LAYER_SUBMENU_BUTTON_CLASS);
+		buttonEl.dataset.layerAction = action;
+		buttonEl.disabled = !canReorderSelectedCanvasNodes(canvas, action);
+		buttonEl.setAttribute("aria-label", buttonConfig.label);
+		buttonEl.setAttribute("data-tooltip-position", "top");
+		buttonEl.setAttribute("role", "menuitem");
+		setIcon(buttonEl, buttonConfig.icon);
+
+		this.buttonDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleButtonPointerDown),
+			this.addListener(buttonEl, "click", (event: MouseEvent) => this.handleLayerActionButtonClick(event, action)),
+		);
+
+		return buttonEl;
+	}
+
+	private insertControls(menuEl: HTMLElement, ...controlEls: HTMLElement[]): void {
 		const insertionAnchor = findNativeMenuInsertionAnchor(menuEl);
 
-		menuEl.insertBefore(growButtonEl, insertionAnchor);
-		menuEl.insertBefore(shrinkButtonEl, insertionAnchor);
+		for (const controlEl of controlEls) {
+			menuEl.insertBefore(controlEl, insertionAnchor);
+		}
 	}
 
 	private areControlsMountedIn(menuEl: HTMLElement): boolean {
 		return this.buttonEls.length === 2
-			&& this.buttonEls.every((buttonEl) => buttonEl.isConnected && buttonEl.parentElement === menuEl);
+			&& this.buttonEls.every((buttonEl) => buttonEl.isConnected && buttonEl.parentElement === menuEl)
+			&& Boolean(this.layerMenuEl?.isConnected && this.layerMenuEl.parentElement === menuEl);
 	}
 
 	private removeStaleControls(menuEl: HTMLElement): void {
-		const knownButtons = new Set(this.buttonEls);
-		const staleButtons = Array.from(this.target.containerEl.querySelectorAll<HTMLButtonElement>(`.${SCALE_BUTTON_CLASS}`));
+		const knownControls = new Set<HTMLElement>([...this.buttonEls]);
 
-		for (const buttonEl of staleButtons) {
-			if (!knownButtons.has(buttonEl) || buttonEl.parentElement !== menuEl) {
-				buttonEl.remove();
+		if (this.layerMenuEl) {
+			knownControls.add(this.layerMenuEl);
+		}
+
+		const staleControls = Array.from(this.target.containerEl.querySelectorAll<HTMLElement>(NATIVE_CONTROL_SELECTOR));
+
+		for (const controlEl of staleControls) {
+			if (!knownControls.has(controlEl) || controlEl.parentElement !== menuEl) {
+				controlEl.remove();
 			}
 		}
 	}
@@ -218,10 +305,13 @@ export class NativeCanvasElementScaleControls {
 		for (const buttonEl of this.buttonEls.splice(0)) {
 			buttonEl.remove();
 		}
+
+		this.layerMenuEl?.remove();
+		this.layerMenuEl = null;
 	}
 
 	private findNativeMenuEl(): HTMLElement | null {
-		return this.target.containerEl.querySelector<HTMLElement>(".canvas-menu:not(.draw-in-canvas-stroke-scale-menu)");
+		return this.target.containerEl.querySelector<HTMLElement>(".canvas-menu:not(.draw-in-canvas-stroke-scale-menu):not(.draw-in-canvas-layer-submenu)");
 	}
 
 	private syncContentScales(canvas = getNativeCanvas(this.target)): void {
@@ -349,6 +439,47 @@ export class NativeCanvasElementScaleControls {
 		canvas.menu?.render?.(true);
 		canvas.requestFrame?.();
 		this.sync();
+	}
+
+	private handleLayerMenuButtonClick(event: MouseEvent, wrapperEl: HTMLElement, buttonEl: HTMLButtonElement): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const isOpen = !wrapperEl.classList.contains("is-open");
+		wrapperEl.classList.toggle("is-open", isOpen);
+		buttonEl.setAttribute("aria-expanded", isOpen.toString());
+	}
+
+	private handleLayerActionButtonClick(event: MouseEvent, action: LayerAction): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const canvas = getNativeCanvas(this.target);
+
+		if (!canvas) {
+			this.removeControls();
+			return;
+		}
+
+		if (!reorderSelectedCanvasNodes(canvas, action)) {
+			this.sync();
+			return;
+		}
+
+		canvas.requestSave?.(true);
+		canvas.menu?.render?.(true);
+		canvas.requestFrame?.();
+		this.sync();
+	}
+
+	private syncLayerMenuButtonStates(canvas: NativeCanvasInstance): void {
+		for (const buttonEl of Array.from(this.layerMenuEl?.querySelectorAll<HTMLButtonElement>(`.${LAYER_SUBMENU_BUTTON_CLASS}`) ?? [])) {
+			const action = toLayerAction(buttonEl.dataset.layerAction);
+
+			if (action) {
+				buttonEl.disabled = !canReorderSelectedCanvasNodes(canvas, action);
+			}
+		}
 	}
 
 	private addListener<T extends Event>(
@@ -543,6 +674,68 @@ function getNodeResizePointerdownPrototypes(node: NativeCanvasNode): NativeCanva
 
 function noop(): void {}
 
+function canReorderSelectedCanvasNodes(canvas: NativeCanvasInstance, action: LayerAction): boolean {
+	return hasLayerOrderChanged(getCanvasNodeLayerIds(canvas), getSelectedCanvasNodeIds(canvas), action);
+}
+
+function reorderSelectedCanvasNodes(canvas: NativeCanvasInstance, action: LayerAction): boolean {
+	const selectedNodeIds = getSelectedCanvasNodeIds(canvas);
+	const beforeNodeIds = getCanvasNodeLayerIds(canvas);
+	const afterNodeIds = reorderIdsByLayerAction(beforeNodeIds, selectedNodeIds, action);
+
+	if (selectedNodeIds.length === 0 || !hasLayerOrderChanged(beforeNodeIds, selectedNodeIds, action)) {
+		return false;
+	}
+
+	applyCanvasNodeLayerOrder(canvas, afterNodeIds);
+	return true;
+}
+
+function applyCanvasNodeLayerOrder(canvas: NativeCanvasInstance, nodeIds: readonly string[]): void {
+	const currentNodes = getCanvasNodesByLayer(canvas);
+	const orderedNodes = orderItemsByIds(currentNodes, nodeIds);
+	const zIndexes = currentNodes
+		.map((node, index) => isFiniteNumber(node.zIndex) ? node.zIndex : index + 1)
+		.sort((a, b) => a - b);
+
+	for (let index = 0; index < orderedNodes.length; index++) {
+		const node = orderedNodes[index];
+		const zIndex = zIndexes[index] ?? index + 1;
+
+		if (!node) {
+			continue;
+		}
+
+		node.zIndex = zIndex;
+		node.renderZIndex?.();
+		node.render?.();
+	}
+
+	canvas.zIndexCounter = Math.max(canvas.zIndexCounter ?? 0, ...zIndexes);
+}
+
+function getCanvasNodeLayerIds(canvas: NativeCanvasInstance): string[] {
+	return getCanvasNodesByLayer(canvas).map((node) => node.id).filter(isPresent);
+}
+
+function getSelectedCanvasNodeIds(canvas: NativeCanvasInstance): string[] {
+	return getSelectedCanvasNodes(canvas).map((node) => node.id).filter(isPresent);
+}
+
+function getCanvasNodesByLayer(canvas: NativeCanvasInstance): NativeCanvasNode[] {
+	return Array.from(canvas.nodes?.values() ?? [])
+		.filter(isLayerableCanvasNode)
+		.sort(compareCanvasNodeLayer);
+}
+
+function compareCanvasNodeLayer(a: NativeCanvasNode, b: NativeCanvasNode): number {
+	return getCanvasNodeZIndex(a) - getCanvasNodeZIndex(b);
+}
+
+function getCanvasNodeZIndex(node: NativeCanvasNode): number {
+	return isFiniteNumber(node.zIndex) ? node.zIndex : 0;
+}
+
 function scaleSelectedCanvasNodes(canvas: NativeCanvasInstance, scale: number): boolean {
 	const nodes = getSelectedResizableNodes(canvas);
 	const bounds = getCombinedBounds(nodes);
@@ -587,6 +780,10 @@ function scaleSelectedCanvasNodes(canvas: NativeCanvasInstance, scale: number): 
 }
 
 function getSelectedResizableNodes(canvas: NativeCanvasInstance): NativeCanvasNode[] {
+	return getSelectedCanvasNodes(canvas).filter(isResizableCanvasNode);
+}
+
+function getSelectedCanvasNodes(canvas: NativeCanvasInstance): NativeCanvasNode[] {
 	const selection = canvas.selection;
 
 	if (!selection) {
@@ -607,16 +804,26 @@ function getSelectedResizableNodes(canvas: NativeCanvasInstance): NativeCanvasNo
 }
 
 function getCanvasNode(canvas: NativeCanvasInstance, selectedItem: unknown): NativeCanvasNode | null {
-	if (isResizableCanvasNode(selectedItem)) {
-		return selectedItem;
+	if (isLayerableCanvasNode(selectedItem)) {
+		const node = canvas.nodes?.get(selectedItem.id);
+		return isLayerableCanvasNode(node) ? node : null;
 	}
 
 	if (typeof selectedItem === "string") {
 		const node = canvas.nodes?.get(selectedItem);
-		return isResizableCanvasNode(node) ? node : null;
+		return isLayerableCanvasNode(node) ? node : null;
 	}
 
 	return null;
+}
+
+function isLayerableCanvasNode(value: unknown): value is NativeCanvasNode & {id: string} {
+	if (!value || typeof value !== "object") {
+		return false;
+	}
+
+	const node = value as Partial<NativeCanvasNode>;
+	return typeof node.id === "string" && node.id.length > 0;
 }
 
 function isResizableCanvasNode(value: unknown): value is NativeCanvasNode {
@@ -796,11 +1003,23 @@ function rectsMatch(node: NativeCanvasNode, rect: NativeCanvasRect): boolean {
 }
 
 function findNativeMenuInsertionAnchor(menuEl: HTMLElement): HTMLButtonElement | null {
-	return menuEl.querySelector<HTMLButtonElement>(`button.clickable-icon:not(.${SCALE_BUTTON_CLASS})`);
+	return menuEl.querySelector<HTMLButtonElement>(
+		`button.clickable-icon:not(.${SCALE_BUTTON_CLASS}):not(.${LAYER_MENU_BUTTON_CLASS}):not(.${LAYER_SUBMENU_BUTTON_CLASS})`,
+	);
 }
 
 function getNativeCanvas(target: CanvasTarget): NativeCanvasInstance | null {
 	return ((target.view as CanvasViewWithCanvas).canvas ?? null);
+}
+
+function toLayerAction(value: string | undefined): LayerAction | null {
+	return value === "bring-forward" || value === "bring-to-front" || value === "send-backward" || value === "send-to-back"
+		? value
+		: null;
+}
+
+function isPresent<T>(value: T | undefined): value is T {
+	return value !== undefined;
 }
 
 function isValidBounds(bounds: NativeCanvasBounds): boolean {

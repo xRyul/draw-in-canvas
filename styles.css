@@ -1434,12 +1434,47 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .canvas-menu.draw-in-canvas-stroke-scale-menu {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
+	justify-content: center;
+	max-width: var(--draw-in-canvas-stroke-scale-menu-max-width, none);
 }
 
 .draw-in-canvas-stroke-action-button {
 	position: relative;
 	touch-action: none;
+}
+
+.draw-in-canvas-layer-menu {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.draw-in-canvas-layer-menu-button,
+.draw-in-canvas-layer-submenu-button {
+	position: relative;
+	touch-action: none;
+}
+
+.canvas-menu.draw-in-canvas-layer-submenu {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 50%;
+	z-index: 1003;
+	display: none;
+	width: max-content;
+	transform: translateX(-50%);
+}
+
+.draw-in-canvas-layer-menu.is-open > .draw-in-canvas-layer-submenu {
+	display: flex;
+}
+
+.draw-in-canvas-stroke-action-button:disabled,
+.draw-in-canvas-layer-submenu-button:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
 }
 
 .draw-in-canvas-stroke-color-button::after {

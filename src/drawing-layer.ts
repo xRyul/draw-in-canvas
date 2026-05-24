@@ -34,6 +34,13 @@ import {
 } from "./types";
 import {getStroke} from "./perfect-freehand";
 import {updateVisibleStrokePaintAttributes} from "./stroke-paint";
+import {
+	areIdOrdersEqual,
+	hasLayerOrderChanged,
+	orderItemsByIds,
+	reorderIdsByLayerAction,
+	type LayerAction,
+} from "./layering";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const MIN_POINT_DISTANCE = 1;
@@ -50,8 +57,20 @@ const SELECTION_CORNER_RADIUS = 4;
 const SELECTION_HANDLE_CORNER_RADIUS = 2;
 const STROKE_SCALE_MENU_GAP = 10;
 const STROKE_SCALE_MENU_MARGIN = 10;
-const STROKE_SCALE_MENU_FALLBACK_WIDTH = 96;
+const STROKE_SCALE_MENU_FALLBACK_WIDTH = 180;
 const STROKE_SCALE_MENU_FALLBACK_HEIGHT = 42;
+const STROKE_LAYER_ACTIONS = [
+	"send-to-back",
+	"send-backward",
+	"bring-forward",
+	"bring-to-front",
+] as const satisfies readonly LayerAction[];
+const STROKE_LAYER_BUTTON_CONFIGS: Record<LayerAction, {label: string; icon: string}> = {
+	"send-to-back": {label: "Send selected drawing to back", icon: "arrow-down-to-line"},
+	"send-backward": {label: "Send selected drawing backward", icon: "arrow-down"},
+	"bring-forward": {label: "Bring selected drawing forward", icon: "arrow-up"},
+	"bring-to-front": {label: "Bring selected drawing to front", icon: "arrow-up-to-line"},
+};
 const MIN_RESIZE_SCALE = 0.05;
 const TINY_ELEMENT_MIN_RESIZE_SCALE = 0.001;
 const RESIZE_SCALE_EPSILON = 0.001;
@@ -139,7 +158,7 @@ const LAB_SLIDER_SETTINGS = [
 	{id: "labA", label: "A", min: LAB_AB_MIN, max: LAB_AB_MAX, step: LAB_SLIDER_STEP, ariaLabel: "Stroke color Lab a axis"},
 	{id: "labB", label: "B", min: LAB_AB_MIN, max: LAB_AB_MAX, step: LAB_SLIDER_STEP, ariaLabel: "Stroke color Lab b axis"},
 ] as const;
-const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor, .draw-in-canvas-scale-button, .draw-in-canvas-stroke-scale-menu-container";
+const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor, .draw-in-canvas-scale-button, .draw-in-canvas-native-layer-menu, .draw-in-canvas-stroke-scale-menu-container";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const BRUSH_POPOVER_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
 const TINY_CONTROL_SCALE_CLASS = "draw-in-canvas-tiny-control-scale";
@@ -236,7 +255,8 @@ type DrawingHistoryAction =
 	| {type: "recolor-strokes"; changes: StrokeColorChange[]}
 	| {type: "move-stroke"; strokeId: string; delta: StrokePoint}
 	| {type: "move-strokes"; strokeIds: string[]; delta: StrokePoint}
-	| {type: "resize-strokes"; strokeIds: string[]; origin: StrokePoint; scale: number};
+	| {type: "resize-strokes"; strokeIds: string[]; origin: StrokePoint; scale: number}
+	| {type: "reorder-strokes"; beforeStrokeIds: string[]; afterStrokeIds: string[]; selectedStrokeIds: string[]};
 
 type DrawingHistoryShortcutAction = "undo" | "redo";
 
@@ -2756,7 +2776,14 @@ export class DrawingLayer {
 			this.addListener(document, "keydown", this.handleDocumentKeyDown, true),
 			this.addListener(document, "keyup", this.handleDocumentKeyUp, true),
 			this.addListener(window, "blur", this.handleWindowBlur),
+			this.addListener(window, "resize", this.handleWindowResize),
 		);
+
+		if (typeof ResizeObserver !== "undefined") {
+			const resizeObserver = new ResizeObserver(() => this.handleWindowResize());
+			resizeObserver.observe(strokeInteractionEl);
+			this.strokeInteractionDisposers.push(() => resizeObserver.disconnect());
+		}
 	}
 
 	private removeStrokeInteractionListeners(): void {
@@ -4929,6 +4956,10 @@ export class DrawingLayer {
 		this.isSpaceKeyPressed = false;
 	};
 
+	private readonly handleWindowResize = (): void => {
+		this.scheduleCanvasDomSync();
+	};
+
 	private readonly handleCanvasUndoPointerDown = (event: PointerEvent): void => {
 		if (this.undoStack.length === 0) {
 			return;
@@ -5195,6 +5226,7 @@ export class DrawingLayer {
 		menuEl.append(
 			this.createStrokeScaleButtonEl("grow"),
 			this.createStrokeScaleButtonEl("shrink"),
+			this.createSelectedStrokeLayerMenuEl(),
 			this.createSelectedStrokeColorButtonEl(),
 			this.createSelectedStrokeDeleteButtonEl(),
 		);
@@ -5215,6 +5247,52 @@ export class DrawingLayer {
 		this.strokeScaleMenuDisposers.push(
 			this.addListener(buttonEl, "pointerdown", this.handleStrokeScaleButtonPointerDown),
 			this.addListener(buttonEl, "click", (event: MouseEvent) => this.handleStrokeScaleButtonClick(event, direction)),
+		);
+
+		return buttonEl;
+	}
+
+	private createSelectedStrokeLayerMenuEl(): HTMLElement {
+		const wrapperEl = document.createElement("div");
+		wrapperEl.classList.add("draw-in-canvas-layer-menu", "draw-in-canvas-stroke-layer-menu");
+
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-layer-menu-button");
+		buttonEl.setAttribute("aria-label", "Layer selected drawing");
+		buttonEl.setAttribute("aria-haspopup", "menu");
+		buttonEl.setAttribute("aria-expanded", "false");
+		buttonEl.setAttribute("data-tooltip-position", "top");
+		setIcon(buttonEl, "layers");
+
+		const submenuEl = document.createElement("div");
+		submenuEl.classList.add("canvas-menu", "draw-in-canvas-layer-submenu");
+		submenuEl.setAttribute("role", "menu");
+		submenuEl.append(...STROKE_LAYER_ACTIONS.map((action) => this.createSelectedStrokeLayerButtonEl(action)));
+
+		wrapperEl.append(buttonEl, submenuEl);
+		this.strokeScaleMenuDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleStrokeScaleButtonPointerDown),
+			this.addListener(buttonEl, "click", (event: MouseEvent) => this.handleSelectedStrokeLayerMenuButtonClick(event, wrapperEl, buttonEl)),
+		);
+
+		return wrapperEl;
+	}
+
+	private createSelectedStrokeLayerButtonEl(action: LayerAction): HTMLButtonElement {
+		const buttonConfig = STROKE_LAYER_BUTTON_CONFIGS[action];
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-layer-submenu-button");
+		buttonEl.disabled = !this.canReorderSelectedStrokes(action);
+		buttonEl.setAttribute("aria-label", buttonConfig.label);
+		buttonEl.setAttribute("data-tooltip-position", "top");
+		buttonEl.setAttribute("role", "menuitem");
+		setIcon(buttonEl, buttonConfig.icon);
+
+		this.strokeScaleMenuDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleStrokeScaleButtonPointerDown),
+			this.addListener(buttonEl, "click", (event: MouseEvent) => this.handleSelectedStrokeLayerButtonClick(event, action)),
 		);
 
 		return buttonEl;
@@ -5269,6 +5347,10 @@ export class DrawingLayer {
 
 		const wrapperEl = this.findCanvasWrapperEl();
 		const wrapperRect = wrapperEl.getBoundingClientRect();
+		this.strokeScaleMenuContainerEl.style.setProperty(
+			"--draw-in-canvas-stroke-scale-menu-max-width",
+			formatCssPixels(Math.max(0, wrapperRect.width - STROKE_SCALE_MENU_MARGIN * 2)),
+		);
 		const menuSize = this.getStrokeScaleMenuSize();
 		const topPoint = this.svgEl.createSVGPoint();
 		topPoint.x = (bounds.minX + bounds.maxX) / 2;
@@ -5359,6 +5441,15 @@ export class DrawingLayer {
 		this.scaleSelectedStrokes(direction === "grow" ? 1.25 : 0.8);
 	}
 
+	private handleSelectedStrokeLayerMenuButtonClick(event: MouseEvent, wrapperEl: HTMLElement, buttonEl: HTMLButtonElement): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const isOpen = !wrapperEl.classList.contains("is-open");
+		wrapperEl.classList.toggle("is-open", isOpen);
+		buttonEl.setAttribute("aria-expanded", isOpen.toString());
+	}
+
 
 	private readonly handleSelectedStrokeColorButtonClick = (event: MouseEvent): void => {
 		event.preventDefault();
@@ -5372,6 +5463,46 @@ export class DrawingLayer {
 		this.commitPendingSelectedStrokeRecolor();
 		this.deleteSelectedStrokes();
 	};
+
+	private handleSelectedStrokeLayerButtonClick(event: MouseEvent, action: LayerAction): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (!this.settings.allowTinyCanvasElements) {
+			this.removeStrokeScaleMenu();
+			return;
+		}
+
+		this.reorderSelectedStrokes(action);
+	}
+
+	private canReorderSelectedStrokes(action: LayerAction): boolean {
+		return hasLayerOrderChanged(this.getStrokeIds(), this.selectedStrokeIds, action);
+	}
+
+	private reorderSelectedStrokes(action: LayerAction): void {
+		this.commitPendingSelectedStrokeRecolor();
+
+		const selectedStrokeIds = this.getSelectedStrokeIds();
+		const beforeStrokeIds = this.getStrokeIds();
+		const afterStrokeIds = reorderIdsByLayerAction(beforeStrokeIds, selectedStrokeIds, action);
+
+		if (selectedStrokeIds.length === 0 || areIdOrdersEqual(beforeStrokeIds, afterStrokeIds)) {
+			return;
+		}
+
+		this.applyStrokeOrder(afterStrokeIds);
+		this.renderStrokes();
+		this.selectStrokes(selectedStrokeIds);
+		this.pushHistory({
+			type: "reorder-strokes",
+			beforeStrokeIds,
+			afterStrokeIds,
+			selectedStrokeIds,
+		});
+		this.hasPendingSave = true;
+		this.scheduleSave();
+	}
 
 	private scaleSelectedStrokes(scale: number): void {
 		const selection = this.getSelectedStrokeBounds();
@@ -5562,6 +5693,14 @@ export class DrawingLayer {
 
 				break;
 
+			case "reorder-strokes": {
+				const strokeIds = direction === "undo" ? action.beforeStrokeIds : action.afterStrokeIds;
+				this.applyStrokeOrder(strokeIds);
+				this.renderStrokes();
+				this.selectStrokes(action.selectedStrokeIds);
+				break;
+			}
+
 			case "move-stroke": {
 				const stroke = this.findStroke(action.strokeId);
 
@@ -5705,6 +5844,14 @@ export class DrawingLayer {
 	private setStrokes(strokes: CanvasStroke[]): void {
 		this.drawingData.strokes = strokes;
 		this.rebuildStrokeIndex();
+	}
+
+	private getStrokeIds(): string[] {
+		return this.drawingData.strokes.map((stroke) => stroke.id);
+	}
+
+	private applyStrokeOrder(strokeIds: readonly string[]): void {
+		this.drawingData.strokes = orderItemsByIds(this.drawingData.strokes, strokeIds);
 	}
 
 	private addStroke(stroke: CanvasStroke): void {
@@ -8082,6 +8229,14 @@ function cloneHistoryAction(action: DrawingHistoryAction): DrawingHistoryAction 
 				type: "delete-strokes",
 				strokes: cloneStrokes(action.strokes),
 				indices: [...action.indices],
+			};
+
+		case "reorder-strokes":
+			return {
+				type: "reorder-strokes",
+				beforeStrokeIds: [...action.beforeStrokeIds],
+				afterStrokeIds: [...action.afterStrokeIds],
+				selectedStrokeIds: [...action.selectedStrokeIds],
 			};
 
 		case "recolor-strokes":

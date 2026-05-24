@@ -258,7 +258,7 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Allow tiny canvas items")
-			.setDesc("Lower Obsidian's canvas item size limit so native cards, groups, and plugin strokes can be resized much smaller. Also lets native canvas zoom go past the normal zoom-in limit, adds +/− size buttons to the native selection menu, and keeps shift-resizing proportional while this plugin is active.")
+			.setDesc("Lower Obsidian's canvas item size limit so native cards, groups, and plugin strokes can be resized much smaller. Also lets native canvas zoom go past the normal zoom-in limit, adds +/− size buttons and a layer submenu to the native selection menu, and keeps shift-resizing proportional while this plugin is active.")
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.allowTinyCanvasElements)
 				.onChange((value) => {
