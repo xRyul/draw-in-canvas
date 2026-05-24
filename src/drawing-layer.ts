@@ -47,6 +47,10 @@ const SELECTION_DASH_LENGTH = 6;
 const SELECTION_DASH_GAP = 4;
 const SELECTION_CORNER_RADIUS = 4;
 const SELECTION_HANDLE_CORNER_RADIUS = 2;
+const STROKE_SCALE_MENU_GAP = 10;
+const STROKE_SCALE_MENU_MARGIN = 10;
+const STROKE_SCALE_MENU_FALLBACK_WIDTH = 96;
+const STROKE_SCALE_MENU_FALLBACK_HEIGHT = 42;
 const MIN_RESIZE_SCALE = 0.05;
 const TINY_ELEMENT_MIN_RESIZE_SCALE = 0.001;
 const RESIZE_SCALE_EPSILON = 0.001;
@@ -2620,8 +2624,12 @@ export class DrawingLayer {
 			this.mountRenderLayer();
 			this.injectToolbarButton();
 			const didTinyControlScaleChange = this.syncTinyCanvasFeaturesForDomChange();
-			if (didTinyControlScaleChange && this.selectedStrokeIds.size > 0) {
-				this.renderSelectionBox();
+			if (this.selectedStrokeIds.size > 0 && !this.dragState && !this.resizeState && !this.nativeSelectionDragState) {
+				if (didTinyControlScaleChange) {
+					this.renderSelectionBox();
+				} else {
+					this.syncSelectedStrokeScaleMenuPosition();
+				}
 			}
 			if (this.isDrawingEnabled()) {
 				this.mountBrushControls();
@@ -4960,6 +4968,17 @@ export class DrawingLayer {
 		return handleEl;
 	}
 
+	private syncSelectedStrokeScaleMenuPosition(): void {
+		const selection = this.getSelectedStrokeBounds();
+
+		if (!selection) {
+			this.removeStrokeScaleMenu();
+			return;
+		}
+
+		this.renderStrokeScaleMenu(expandBounds(selection.bounds, selection.padding));
+	}
+
 	private renderStrokeScaleMenu(bounds: StrokeBounds): void {
 		if (!this.settings.allowTinyCanvasElements || !this.svgEl) {
 			this.removeStrokeScaleMenu();
@@ -5021,18 +5040,67 @@ export class DrawingLayer {
 
 		const wrapperEl = this.findCanvasWrapperEl();
 		const wrapperRect = wrapperEl.getBoundingClientRect();
-		const menuRect = this.strokeScaleMenuContainerEl.getBoundingClientRect();
-		const point = this.svgEl.createSVGPoint();
-		point.x = (bounds.minX + bounds.maxX) / 2;
-		point.y = bounds.minY;
+		const menuSize = this.getStrokeScaleMenuSize();
+		const topPoint = this.svgEl.createSVGPoint();
+		topPoint.x = (bounds.minX + bounds.maxX) / 2;
+		topPoint.y = bounds.minY;
 
-		const clientPoint = point.matrixTransform(matrix);
-		const left = clamp(clientPoint.x - wrapperRect.left - menuRect.width / 2, 10, Math.max(10, wrapperRect.width - menuRect.width - 10));
-		const top = clamp(clientPoint.y - wrapperRect.top - menuRect.height - 10, 10, Math.max(10, wrapperRect.height - menuRect.height - 10));
+		const bottomPoint = this.svgEl.createSVGPoint();
+		bottomPoint.x = topPoint.x;
+		bottomPoint.y = bounds.maxY;
+
+		const topClientPoint = topPoint.matrixTransform(matrix);
+		const bottomClientPoint = bottomPoint.matrixTransform(matrix);
+		const minLeft = STROKE_SCALE_MENU_MARGIN;
+		const maxLeft = Math.max(minLeft, wrapperRect.width - menuSize.width - STROKE_SCALE_MENU_MARGIN);
+		const left = clamp(topClientPoint.x - wrapperRect.left - menuSize.width / 2, minLeft, maxLeft);
+		const minTop = STROKE_SCALE_MENU_MARGIN;
+		const maxTop = Math.max(minTop, wrapperRect.height - menuSize.height - STROKE_SCALE_MENU_MARGIN);
+		const aboveTop = topClientPoint.y - wrapperRect.top - menuSize.height - STROKE_SCALE_MENU_GAP;
+		const belowTop = bottomClientPoint.y - wrapperRect.top + STROKE_SCALE_MENU_GAP;
+		const top = aboveTop < minTop && belowTop <= maxTop
+			? belowTop
+			: clamp(aboveTop, minTop, maxTop);
+
+		this.setStrokeScaleMenuPosition(left, top);
+	}
+
+	private getStrokeScaleMenuSize(): {width: number; height: number} {
+		const containerEl = this.strokeScaleMenuContainerEl;
+
+		if (!containerEl) {
+			return {
+				width: STROKE_SCALE_MENU_FALLBACK_WIDTH,
+				height: STROKE_SCALE_MENU_FALLBACK_HEIGHT,
+			};
+		}
+
+		const menuRect = containerEl.querySelector<HTMLElement>(".draw-in-canvas-stroke-scale-menu")?.getBoundingClientRect();
+		const containerRect = containerEl.getBoundingClientRect();
+		const menuWidth = menuRect?.width ?? 0;
+		const menuHeight = menuRect?.height ?? 0;
+
+		return {
+			width: menuWidth > 0 ? menuWidth : containerRect.width || STROKE_SCALE_MENU_FALLBACK_WIDTH,
+			height: menuHeight > 0 ? menuHeight : containerRect.height || STROKE_SCALE_MENU_FALLBACK_HEIGHT,
+		};
+	}
+
+	private setStrokeScaleMenuPosition(left: number, top: number): void {
+		if (!this.strokeScaleMenuContainerEl) {
+			return;
+		}
+
+		const leftCss = formatCssPixels(left);
+		const topCss = formatCssPixels(top);
+
+		if (this.strokeScaleMenuContainerEl.style.left === leftCss && this.strokeScaleMenuContainerEl.style.top === topCss) {
+			return;
+		}
 
 		this.strokeScaleMenuContainerEl.setCssStyles({
-			left: `${left}px`,
-			top: `${top}px`,
+			left: leftCss,
+			top: topCss,
 		});
 	}
 
@@ -5448,6 +5516,12 @@ export class DrawingLayer {
 		for (const handleEl of this.selectionHandleEls) {
 			handleEl.setAttribute("transform", transform);
 		}
+
+		const selection = this.getSelectedStrokeBounds();
+
+		if (selection) {
+			this.positionStrokeScaleMenu(translateBounds(expandBounds(selection.bounds, selection.padding), delta));
+		}
 	}
 
 	private clearStrokeDragTransform(dragState: StrokeDragState): void {
@@ -5472,6 +5546,12 @@ export class DrawingLayer {
 
 		for (const handleEl of this.selectionHandleEls) {
 			handleEl.setAttribute("transform", transform);
+		}
+
+		const selection = this.getSelectedStrokeBounds();
+
+		if (selection) {
+			this.positionStrokeScaleMenu(scaleBounds(expandBounds(selection.bounds, selection.padding), resizeState.origin, scale));
 		}
 	}
 

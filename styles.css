@@ -1422,6 +1422,25 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	filter: drop-shadow(0 0 2px var(--interactive-accent));
 }
 
+.canvas-menu-container.draw-in-canvas-stroke-scale-menu-container {
+	position: absolute;
+	z-index: 1002;
+	width: max-content;
+	right: auto;
+	bottom: auto;
+	transform: none;
+	pointer-events: auto;
+}
+
+.canvas-menu.draw-in-canvas-stroke-scale-menu {
+	display: flex;
+	align-items: center;
+}
+
+.draw-in-canvas-stroke-scale-button {
+	touch-action: none;
+}
+
 .draw-in-canvas-selection-box {
 	fill: none;
 	stroke: var(--interactive-accent);
