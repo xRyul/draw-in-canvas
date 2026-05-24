@@ -1,6 +1,8 @@
 import {App, Notice, setIcon} from "obsidian";
 import {loadCanvasDrawingData, saveCanvasDrawingData} from "./canvas-file";
 import {CanvasTarget} from "./canvas-target";
+import {NativeCanvasInteractionLimits} from "./canvas-limits";
+import {NativeCanvasElementScaleControls} from "./canvas-element-scale-controls";
 import {
 	DrawInCanvasSettings,
 	FREEHAND_SLIDER_SETTINGS,
@@ -36,10 +38,19 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const MIN_POINT_DISTANCE = 1;
 const DRAG_MOVE_THRESHOLD = 1;
 const HIT_TARGET_PADDING = 10;
+const MIN_HIT_TARGET_SIZE = 12;
 const RESIZE_HANDLE_SIZE = 10;
 const RESIZE_HANDLE_HIT_PADDING = 6;
+const SELECTION_PADDING = 4;
+const SELECTION_STROKE_WIDTH = 1.5;
+const SELECTION_DASH_LENGTH = 6;
+const SELECTION_DASH_GAP = 4;
+const SELECTION_CORNER_RADIUS = 4;
+const SELECTION_HANDLE_CORNER_RADIUS = 2;
 const MIN_RESIZE_SCALE = 0.05;
+const TINY_ELEMENT_MIN_RESIZE_SCALE = 0.001;
 const RESIZE_SCALE_EPSILON = 0.001;
+const MIN_SCALED_STROKE_WIDTH = 0.001;
 const SAVE_DEBOUNCE_MS = 300;
 const TOOLBAR_LONG_PRESS_MS = 450;
 const ACTIVE_STROKE_PREVIEW_WINDOW_SIZE = 160;
@@ -122,9 +133,26 @@ const LAB_SLIDER_SETTINGS = [
 	{id: "labA", label: "A", min: LAB_AB_MIN, max: LAB_AB_MAX, step: LAB_SLIDER_STEP, ariaLabel: "Stroke color Lab a axis"},
 	{id: "labB", label: "B", min: LAB_AB_MIN, max: LAB_AB_MAX, step: LAB_SLIDER_STEP, ariaLabel: "Stroke color Lab b axis"},
 ] as const;
-const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor";
+const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor, .draw-in-canvas-scale-button, .draw-in-canvas-stroke-scale-menu-container";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const BRUSH_POPOVER_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
+const TINY_CONTROL_SCALE_CLASS = "draw-in-canvas-tiny-control-scale";
+const TINY_CONTROL_BORDER_WIDTH = 1;
+const TINY_CONTROL_CARD_SHADOW_Y = 0.5;
+const TINY_CONTROL_CARD_SHADOW_BLUR = 1;
+const TINY_CONTROL_CARD_SHADOW_SPREAD = 0.5;
+const TINY_CONTROL_FOCUS_SPREAD = 2;
+const TINY_CONTROL_RESIZER_SIZE = 20;
+const TINY_CONTROL_CONNECTION_POINT_SIZE = 20;
+const TINY_CONTROL_CONNECTION_BORDER_WIDTH = 3;
+const TINY_CONTROL_EDGE_WIDTH = 2;
+const TINY_CONTROL_EDGE_FOCUS_WIDTH = 5.5;
+const TINY_CONTROL_EDGE_HIT_WIDTH = 24;
+const TINY_CONTROL_SNAP_LINE_WIDTH = 1;
+const TINY_CONTROL_SELECTION_BORDER_WIDTH = 2;
+const TINY_CONTROL_GROUP_SELECTION_BORDER_WIDTH = 3;
+const TINY_CONTROL_GROUP_SELECTION_RADIUS = 3;
+const TINY_CONTROL_LABEL_GAP = 1;
 
 interface StrokeBounds {
 	minX: number;
@@ -233,6 +261,11 @@ interface SelectionBounds {
 	padding: number;
 }
 
+interface NativeEdgePathOverride {
+	originalPathData: string | null;
+	patchedPathData: string;
+}
+
 interface ToolbarPressState {
 	pointerId: number;
 	timeoutId: number;
@@ -278,6 +311,8 @@ export class DrawingLayer {
 	private readonly requestSetStrokeOpacity: (opacity: number) => void;
 	private readonly requestSetFreehandSliderValue: (setting: FreehandSliderSetting, value: number) => void;
 	private readonly requestSetBeautifulStrokes: (enabled: boolean) => void;
+	private readonly nativeCanvasLimits: NativeCanvasInteractionLimits;
+	private readonly nativeElementScaleControls: NativeCanvasElementScaleControls;
 	private settings: DrawInCanvasSettings;
 	private drawingData: CanvasDrawingData = createEmptyDrawingData();
 	private readonly strokeById = new Map<string, CanvasStroke>();
@@ -325,10 +360,12 @@ export class DrawingLayer {
 	private readonly selectedStrokeIds = new Set<string>();
 	private selectionBoxEl: SVGRectElement | null = null;
 	private readonly selectionHandleEls: SVGRectElement[] = [];
+	private strokeScaleMenuContainerEl: HTMLElement | null = null;
 	private dragState: StrokeDragState | null = null;
 	private resizeState: StrokeResizeState | null = null;
 	private nativeSelectionDragState: NativeSelectionDragState | null = null;
 	private mutationObserver: MutationObserver | null = null;
+	private isObservingCanvasAttributes: boolean | null = null;
 	private domSyncFrameId: number | null = null;
 	private saveTimeoutId: number | null = null;
 	private hasPendingSave = false;
@@ -338,6 +375,9 @@ export class DrawingLayer {
 	private suppressNextNativeRedoClick = false;
 	private isSpaceKeyPressed = false;
 	private interactionCursor: string | null = null;
+	private tinyControlScaleWrapperEl: HTMLElement | null = null;
+	private tinyControlScaleKey = "";
+	private readonly nativeEdgePathOverrides = new Map<SVGPathElement, NativeEdgePathOverride>();
 	private readonly captureDisposers: Array<() => void> = [];
 	private readonly toolbarDisposers: Array<() => void> = [];
 	private readonly colorPaletteDisposers: Array<() => void> = [];
@@ -347,6 +387,7 @@ export class DrawingLayer {
 	private readonly renderDisposers: Array<() => void> = [];
 	private readonly strokeInteractionDisposers: Array<() => void> = [];
 	private readonly canvasHistoryButtonDisposers: Array<() => void> = [];
+	private readonly strokeScaleMenuDisposers: Array<() => void> = [];
 	private readonly undoStack: DrawingHistoryAction[] = [];
 	private readonly redoStack: DrawingHistoryAction[] = [];
 
@@ -364,6 +405,8 @@ export class DrawingLayer {
 	) {
 		this.app = app;
 		this.target = target;
+		this.nativeCanvasLimits = new NativeCanvasInteractionLimits(target);
+		this.nativeElementScaleControls = new NativeCanvasElementScaleControls(target);
 		this.settings = {...settings};
 		this.customColorHex = normalizeHexColor(settings.strokeColor) ?? DEFAULT_CUSTOM_COLOR;
 		this.colorWheelHsv = getColorWheelHsv(this.customColorHex, this.colorWheelHsv.h);
@@ -384,6 +427,7 @@ export class DrawingLayer {
 		this.mountRenderLayer();
 		this.injectToolbarButton();
 		this.observeCanvasDom();
+		this.syncTinyCanvasFeatureState();
 	}
 
 	async stop(): Promise<void> {
@@ -394,6 +438,7 @@ export class DrawingLayer {
 
 		this.mutationObserver?.disconnect();
 		this.mutationObserver = null;
+		this.isObservingCanvasAttributes = null;
 
 		if (this.domSyncFrameId !== null) {
 			window.cancelAnimationFrame(this.domSyncFrameId);
@@ -420,6 +465,10 @@ export class DrawingLayer {
 			window.clearTimeout(this.saveTimeoutId);
 			this.saveTimeoutId = null;
 		}
+
+		this.clearTinyControlScale();
+		this.nativeCanvasLimits.dispose();
+		this.nativeElementScaleControls.dispose();
 
 		await this.saveNow();
 	}
@@ -467,8 +516,15 @@ export class DrawingLayer {
 
 	setSettings(settings: DrawInCanvasSettings): void {
 		const shouldRerenderStrokes = shouldRerenderForSettingsChange(this.settings, settings);
+		const shouldResyncStrokeScaleMenu = this.settings.allowTinyCanvasElements !== settings.allowTinyCanvasElements;
 
 		this.settings = {...settings};
+		this.syncCanvasDomObserver();
+		const didTinyControlScaleChange = this.syncTinyCanvasFeatureState();
+
+		if ((shouldResyncStrokeScaleMenu || didTinyControlScaleChange) && this.selectedStrokeIds.size > 0) {
+			this.renderSelectionBox();
+		}
 		this.updateCustomColorFromStrokeColor();
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
@@ -2527,11 +2583,31 @@ export class DrawingLayer {
 
 	private observeCanvasDom(): void {
 		this.mutationObserver = new MutationObserver(() => this.scheduleCanvasDomSync());
+		this.syncCanvasDomObserver();
+	}
 
-		this.mutationObserver.observe(this.target.containerEl, {
+	private syncCanvasDomObserver(): void {
+		if (!this.mutationObserver) {
+			return;
+		}
+
+		const shouldObserveAttributes = this.settings.allowTinyCanvasElements;
+
+		if (this.isObservingCanvasAttributes === shouldObserveAttributes) {
+			return;
+		}
+
+		this.mutationObserver.disconnect();
+		this.mutationObserver.observe(this.target.containerEl, shouldObserveAttributes ? {
+			attributes: true,
+			attributeFilter: ["class", "style"],
+			childList: true,
+			subtree: true,
+		} : {
 			childList: true,
 			subtree: true,
 		});
+		this.isObservingCanvasAttributes = shouldObserveAttributes;
 	}
 
 	private scheduleCanvasDomSync(): void {
@@ -2543,10 +2619,33 @@ export class DrawingLayer {
 			this.domSyncFrameId = null;
 			this.mountRenderLayer();
 			this.injectToolbarButton();
+			const didTinyControlScaleChange = this.syncTinyCanvasFeaturesForDomChange();
+			if (didTinyControlScaleChange && this.selectedStrokeIds.size > 0) {
+				this.renderSelectionBox();
+			}
 			if (this.isDrawingEnabled()) {
 				this.mountBrushControls();
 			}
 		});
+	}
+
+	private syncTinyCanvasFeatureState(): boolean {
+		const didTinyControlScaleChange = this.syncTinyControlScale();
+		this.nativeCanvasLimits.setEnabled(this.settings.allowTinyCanvasElements);
+		this.nativeElementScaleControls.setEnabled(this.settings.allowTinyCanvasElements);
+		return didTinyControlScaleChange;
+	}
+
+	private syncTinyCanvasFeaturesForDomChange(): boolean {
+		if (this.settings.allowTinyCanvasElements) {
+			const didTinyControlScaleChange = this.syncTinyControlScale();
+			this.nativeCanvasLimits.setEnabled(true);
+			this.nativeElementScaleControls.syncForCanvasDomChange();
+			return didTinyControlScaleChange;
+		}
+
+		this.nativeElementScaleControls.syncForCanvasDomChange();
+		return false;
 	}
 
 	private renderStrokes(): void {
@@ -4169,6 +4268,10 @@ export class DrawingLayer {
 			return;
 		}
 
+		if (isCanvasControlTarget(event.target)) {
+			return;
+		}
+
 		const point = this.clientPointToCanvasPoint(event);
 
 		if (!point) {
@@ -4248,7 +4351,7 @@ export class DrawingLayer {
 	};
 
 	private updateInteractionCursorFromEvent(event: PointerEvent): void {
-		if (this.captureEl || this.isSpaceKeyPressed || isNativeCanvasContentTarget(event.target)) {
+		if (this.captureEl || this.isSpaceKeyPressed || isNativeCanvasContentTarget(event.target) || isCanvasControlTarget(event.target)) {
 			this.setInteractionCursor(null);
 			return;
 		}
@@ -4438,7 +4541,8 @@ export class DrawingLayer {
 			return;
 		}
 
-		const scale = Math.max(MIN_RESIZE_SCALE, distanceBetween(resizeState.origin, point) / resizeState.referenceDistance);
+		const minimumScale = this.settings.allowTinyCanvasElements ? TINY_ELEMENT_MIN_RESIZE_SCALE : MIN_RESIZE_SCALE;
+		const scale = Math.max(minimumScale, distanceBetween(resizeState.origin, point) / resizeState.referenceDistance);
 
 		if (!resizeState.hasMoved && Math.abs(scale - 1) < RESIZE_SCALE_EPSILON) {
 			return;
@@ -4555,11 +4659,13 @@ export class DrawingLayer {
 	private getNativeSelectionDragStrokeIds(state: NativeSelectionDragState): string[] {
 		const selectionBounds = getBoundsFromPoints(state.startPoint, state.currentPoint);
 		const selectedStrokeIds = state.isAdditive ? new Set(state.initialSelectedStrokeIds) : new Set<string>();
+		const screenSelectionPadding = this.getCanvasUnitsForScreenPixels(SELECTION_PADDING);
 
 		for (const stroke of this.drawingData.strokes) {
 			const bounds = this.getStrokeBounds(stroke);
 
-			if (!bounds || !doBoundsIntersect(selectionBounds, bounds, Math.max(stroke.width / 2, 1))) {
+			const selectionPadding = Math.max(stroke.width / 2, screenSelectionPadding);
+			if (!bounds || !doBoundsIntersect(selectionBounds, bounds, selectionPadding)) {
 				continue;
 			}
 
@@ -4790,6 +4896,7 @@ export class DrawingLayer {
 	}
 
 	private renderSelectionBox(): void {
+		this.syncTinyControlScale();
 		this.removeSelectionOverlay();
 
 		const selection = this.getSelectedStrokeBounds();
@@ -4799,6 +4906,7 @@ export class DrawingLayer {
 		}
 
 		const outerBounds = expandBounds(selection.bounds, selection.padding);
+		const canvasUnitsPerPixel = this.getCanvasUnitsForScreenPixels(1);
 
 		const rectEl = document.createElementNS(SVG_NS, "rect");
 		rectEl.classList.add("draw-in-canvas-selection-box");
@@ -4806,7 +4914,12 @@ export class DrawingLayer {
 		rectEl.setAttribute("y", roundCoordinate(outerBounds.minY).toString());
 		rectEl.setAttribute("width", roundCoordinate(outerBounds.maxX - outerBounds.minX).toString());
 		rectEl.setAttribute("height", roundCoordinate(outerBounds.maxY - outerBounds.minY).toString());
-		rectEl.setAttribute("rx", "4");
+		rectEl.setAttribute("rx", formatSvgLength(SELECTION_CORNER_RADIUS * canvasUnitsPerPixel));
+		rectEl.style.setProperty("stroke-width", formatSvgLength(SELECTION_STROKE_WIDTH * canvasUnitsPerPixel));
+		rectEl.style.setProperty(
+			"stroke-dasharray",
+			`${formatSvgLength(SELECTION_DASH_LENGTH * canvasUnitsPerPixel)} ${formatSvgLength(SELECTION_DASH_GAP * canvasUnitsPerPixel)}`,
+		);
 		rectEl.setAttribute("pointer-events", "none");
 		this.svgEl.appendChild(rectEl);
 		this.selectionBoxEl = rectEl;
@@ -4816,9 +4929,12 @@ export class DrawingLayer {
 			this.svgEl.appendChild(handleEl);
 			this.selectionHandleEls.push(handleEl);
 		}
+
+		this.renderStrokeScaleMenu(outerBounds);
 	}
 
 	private removeSelectionOverlay(): void {
+		this.removeStrokeScaleMenu();
 		this.selectionBoxEl?.remove();
 		this.selectionBoxEl = null;
 
@@ -4832,13 +4948,157 @@ export class DrawingLayer {
 		const handleEl = document.createElementNS(SVG_NS, "rect");
 		handleEl.classList.add("draw-in-canvas-selection-handle", `mod-${handle}`);
 		handleEl.dataset.resizeHandle = handle;
-		handleEl.setAttribute("x", roundCoordinate(point.x - RESIZE_HANDLE_SIZE / 2).toString());
-		handleEl.setAttribute("y", roundCoordinate(point.y - RESIZE_HANDLE_SIZE / 2).toString());
-		handleEl.setAttribute("width", RESIZE_HANDLE_SIZE.toString());
-		handleEl.setAttribute("height", RESIZE_HANDLE_SIZE.toString());
-		handleEl.setAttribute("rx", "2");
+		const handleSize = this.getCanvasUnitsForScreenPixels(RESIZE_HANDLE_SIZE);
+		const halfHandleSize = handleSize / 2;
+		handleEl.setAttribute("x", roundCoordinate(point.x - halfHandleSize).toString());
+		handleEl.setAttribute("y", roundCoordinate(point.y - halfHandleSize).toString());
+		handleEl.setAttribute("width", formatSvgLength(handleSize));
+		handleEl.setAttribute("height", formatSvgLength(handleSize));
+		handleEl.setAttribute("rx", formatSvgLength(this.getCanvasUnitsForScreenPixels(SELECTION_HANDLE_CORNER_RADIUS)));
+		handleEl.style.setProperty("stroke-width", formatSvgLength(this.getCanvasUnitsForScreenPixels(SELECTION_STROKE_WIDTH)));
 		handleEl.setAttribute("pointer-events", "none");
 		return handleEl;
+	}
+
+	private renderStrokeScaleMenu(bounds: StrokeBounds): void {
+		if (!this.settings.allowTinyCanvasElements || !this.svgEl) {
+			this.removeStrokeScaleMenu();
+			return;
+		}
+
+		const wrapperEl = this.findCanvasWrapperEl();
+
+		if (!this.strokeScaleMenuContainerEl?.isConnected || this.strokeScaleMenuContainerEl.parentElement !== wrapperEl) {
+			this.removeStrokeScaleMenu();
+			this.strokeScaleMenuContainerEl = this.createStrokeScaleMenuContainerEl();
+			wrapperEl.appendChild(this.strokeScaleMenuContainerEl);
+		}
+
+		this.positionStrokeScaleMenu(bounds);
+	}
+
+	private createStrokeScaleMenuContainerEl(): HTMLElement {
+		const containerEl = document.createElement("div");
+		containerEl.classList.add("canvas-menu-container", "draw-in-canvas-stroke-scale-menu-container");
+
+		const menuEl = document.createElement("div");
+		menuEl.classList.add("canvas-menu", "draw-in-canvas-stroke-scale-menu");
+		menuEl.append(
+			this.createStrokeScaleButtonEl("grow"),
+			this.createStrokeScaleButtonEl("shrink"),
+		);
+		containerEl.appendChild(menuEl);
+
+		return containerEl;
+	}
+
+	private createStrokeScaleButtonEl(direction: "grow" | "shrink"): HTMLButtonElement {
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-scale-button");
+		buttonEl.setAttribute("aria-label", direction === "grow" ? "Make selected drawing larger" : "Make selected drawing smaller");
+		buttonEl.setAttribute("data-tooltip-position", "top");
+		setIcon(buttonEl, direction === "grow" ? "plus" : "minus");
+
+		this.strokeScaleMenuDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleStrokeScaleButtonPointerDown),
+			this.addListener(buttonEl, "click", (event: MouseEvent) => this.handleStrokeScaleButtonClick(event, direction)),
+		);
+
+		return buttonEl;
+	}
+
+	private positionStrokeScaleMenu(bounds: StrokeBounds): void {
+		if (!this.svgEl || !this.strokeScaleMenuContainerEl) {
+			return;
+		}
+
+		const matrix = this.svgEl.getScreenCTM();
+
+		if (!matrix) {
+			return;
+		}
+
+		const wrapperEl = this.findCanvasWrapperEl();
+		const wrapperRect = wrapperEl.getBoundingClientRect();
+		const menuRect = this.strokeScaleMenuContainerEl.getBoundingClientRect();
+		const point = this.svgEl.createSVGPoint();
+		point.x = (bounds.minX + bounds.maxX) / 2;
+		point.y = bounds.minY;
+
+		const clientPoint = point.matrixTransform(matrix);
+		const left = clamp(clientPoint.x - wrapperRect.left - menuRect.width / 2, 10, Math.max(10, wrapperRect.width - menuRect.width - 10));
+		const top = clamp(clientPoint.y - wrapperRect.top - menuRect.height - 10, 10, Math.max(10, wrapperRect.height - menuRect.height - 10));
+
+		this.strokeScaleMenuContainerEl.setCssStyles({
+			left: `${left}px`,
+			top: `${top}px`,
+		});
+	}
+
+	private removeStrokeScaleMenu(): void {
+		for (const dispose of this.strokeScaleMenuDisposers.splice(0)) {
+			dispose();
+		}
+
+		this.strokeScaleMenuContainerEl?.remove();
+		this.strokeScaleMenuContainerEl = null;
+	}
+
+	private readonly handleStrokeScaleButtonPointerDown = (event: PointerEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+	};
+
+	private handleStrokeScaleButtonClick(event: MouseEvent, direction: "grow" | "shrink"): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (!this.settings.allowTinyCanvasElements) {
+			this.removeStrokeScaleMenu();
+			return;
+		}
+
+		this.scaleSelectedStrokes(direction === "grow" ? 1.25 : 0.8);
+	}
+
+	private scaleSelectedStrokes(scale: number): void {
+		const selection = this.getSelectedStrokeBounds();
+		const strokeIds = this.getSelectedStrokeIds();
+
+		if (!selection || strokeIds.length === 0 || Math.abs(scale - 1) < RESIZE_SCALE_EPSILON) {
+			return;
+		}
+
+		const origin = getBoundsCenter(selection.bounds);
+		const resizedStrokeIds: string[] = [];
+
+		for (const strokeId of strokeIds) {
+			const stroke = this.findStroke(strokeId);
+
+			if (!stroke) {
+				continue;
+			}
+
+			this.scaleStroke(stroke, origin, scale);
+			this.updateStrokeElement(stroke);
+			resizedStrokeIds.push(strokeId);
+		}
+
+		if (resizedStrokeIds.length === 0) {
+			this.renderSelectionBox();
+			return;
+		}
+
+		this.selectStrokes(resizedStrokeIds);
+		this.pushHistory({
+			type: "resize-strokes",
+			strokeIds: resizedStrokeIds,
+			origin,
+			scale,
+		});
+		this.hasPendingSave = true;
+		this.scheduleSave();
 	}
 
 	private findResizeHandleAtPoint(point: StrokePoint): ResizeHandle | null {
@@ -4849,7 +5109,7 @@ export class DrawingLayer {
 		}
 
 		const bounds = expandBounds(selection.bounds, selection.padding);
-		const hitRadius = RESIZE_HANDLE_SIZE / 2 + RESIZE_HANDLE_HIT_PADDING;
+		const hitRadius = this.getCanvasUnitsForScreenPixels(RESIZE_HANDLE_SIZE / 2 + RESIZE_HANDLE_HIT_PADDING);
 
 		let closestHandle: ResizeHandle | null = null;
 		let closestDistance = Number.POSITIVE_INFINITY;
@@ -4872,7 +5132,8 @@ export class DrawingLayer {
 		}
 
 		let selectionBounds: StrokeBounds | null = null;
-		let padding = 4;
+		const screenPadding = this.getCanvasUnitsForScreenPixels(SELECTION_PADDING);
+		let padding = screenPadding;
 
 		for (const strokeId of this.selectedStrokeIds) {
 			const stroke = this.findStroke(strokeId);
@@ -4888,7 +5149,7 @@ export class DrawingLayer {
 			}
 
 			selectionBounds = selectionBounds ? mergeBounds(selectionBounds, bounds) : bounds;
-			padding = Math.max(padding, stroke.width, 4);
+			padding = Math.max(padding, stroke.width / 2 + screenPadding);
 		}
 
 		return selectionBounds ? {bounds: selectionBounds, padding} : null;
@@ -5035,6 +5296,8 @@ export class DrawingLayer {
 	}
 
 	private findStrokeAtPoint(point: StrokePoint): CanvasStroke | null {
+		const hitTargetPadding = this.getCanvasUnitsForScreenPixels(HIT_TARGET_PADDING);
+		const minHitTargetSize = this.getCanvasUnitsForScreenPixels(MIN_HIT_TARGET_SIZE);
 		for (let index = this.drawingData.strokes.length - 1; index >= 0; index--) {
 			const stroke = this.drawingData.strokes[index];
 
@@ -5042,7 +5305,7 @@ export class DrawingLayer {
 				continue;
 			}
 
-			const hitThreshold = Math.max(stroke.width + HIT_TARGET_PADDING, 12) / 2;
+			const hitThreshold = Math.max(stroke.width + hitTargetPadding, minHitTargetSize) / 2;
 			const bounds = this.getStrokeBounds(stroke);
 
 			if (!bounds || !isPointNearBounds(point, bounds, hitThreshold)) {
@@ -5164,7 +5427,7 @@ export class DrawingLayer {
 
 	private scaleStroke(stroke: CanvasStroke, origin: StrokePoint, scale: number): void {
 		scalePointsInPlace(stroke.points, origin, scale);
-		stroke.width = Math.max(0.01, roundCoordinate(stroke.width * scale));
+		stroke.width = Math.max(MIN_SCALED_STROKE_WIDTH, roundCoordinate(stroke.width * scale));
 
 		const bounds = this.strokeBoundsById.get(stroke.id);
 
@@ -5292,6 +5555,180 @@ export class DrawingLayer {
 		return this.target.containerEl.querySelector<HTMLElement>(".canvas") ?? this.findViewContentEl();
 	}
 
+	private syncTinyControlScale(): boolean {
+		if (!this.settings.allowTinyCanvasElements) {
+			const hadControlScale = this.tinyControlScaleWrapperEl !== null || this.tinyControlScaleKey !== "";
+			this.clearTinyControlScale();
+			return hadControlScale;
+		}
+
+		const wrapperEl = this.findCanvasWrapperEl();
+
+		if (this.tinyControlScaleWrapperEl && this.tinyControlScaleWrapperEl !== wrapperEl) {
+			this.clearTinyControlScale();
+		}
+
+		const canvasUnitsPerPixel = this.getCanvasUnitsForScreenPixels(1);
+		const scaleKey = formatSvgLength(canvasUnitsPerPixel);
+
+		wrapperEl.classList.add(TINY_CONTROL_SCALE_CLASS);
+
+		if (this.tinyControlScaleWrapperEl === wrapperEl && this.tinyControlScaleKey === scaleKey) {
+			this.syncNativeCanvasEdgeEndpoints(canvasUnitsPerPixel);
+			return false;
+		}
+
+		wrapperEl.setCssProps({
+			"--draw-in-canvas-tiny-border-width": formatCssPixels(TINY_CONTROL_BORDER_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-card-shadow-y": formatCssPixels(TINY_CONTROL_CARD_SHADOW_Y * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-card-shadow-blur": formatCssPixels(TINY_CONTROL_CARD_SHADOW_BLUR * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-card-shadow-spread": formatCssPixels(TINY_CONTROL_CARD_SHADOW_SPREAD * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-focus-spread": formatCssPixels(TINY_CONTROL_FOCUS_SPREAD * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-resizer-size": formatCssPixels(TINY_CONTROL_RESIZER_SIZE * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-resizer-half": formatCssPixels(TINY_CONTROL_RESIZER_SIZE * canvasUnitsPerPixel / 2),
+			"--draw-in-canvas-tiny-resizer-offset": formatCssPixels(-TINY_CONTROL_RESIZER_SIZE * canvasUnitsPerPixel / 2),
+			"--draw-in-canvas-tiny-connection-border": formatCssPixels(TINY_CONTROL_CONNECTION_BORDER_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-connection-native-border": formatCssPixels(TINY_CONTROL_CONNECTION_BORDER_WIDTH),
+			"--draw-in-canvas-tiny-connection-native-size": formatCssPixels(TINY_CONTROL_CONNECTION_POINT_SIZE),
+			"--draw-in-canvas-tiny-connection-scale": formatSvgLength(canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-connection-size": formatCssPixels(TINY_CONTROL_CONNECTION_POINT_SIZE * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-connection-half": formatCssPixels(TINY_CONTROL_CONNECTION_POINT_SIZE * canvasUnitsPerPixel / 2),
+			"--draw-in-canvas-tiny-edge-width": formatCssPixels(TINY_CONTROL_EDGE_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-edge-focus-width": formatCssPixels(TINY_CONTROL_EDGE_FOCUS_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-edge-hit-width": formatCssPixels(TINY_CONTROL_EDGE_HIT_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-edge-arrow-scale": formatSvgLength(canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-snap-line-width": formatCssPixels(TINY_CONTROL_SNAP_LINE_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-snap-point-scale": formatSvgLength(canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-selection-border-width": formatCssPixels(TINY_CONTROL_SELECTION_BORDER_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-group-selection-border-width": formatCssPixels(TINY_CONTROL_GROUP_SELECTION_BORDER_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-group-selection-radius": formatCssPixels(TINY_CONTROL_GROUP_SELECTION_RADIUS * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-label-gap": formatCssPixels(-TINY_CONTROL_LABEL_GAP * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-label-scale": formatSvgLength(canvasUnitsPerPixel),
+		});
+		this.syncNativeCanvasEdgeEndpoints(canvasUnitsPerPixel);
+		this.tinyControlScaleWrapperEl = wrapperEl;
+		this.tinyControlScaleKey = scaleKey;
+		return true;
+	}
+
+
+	private syncNativeCanvasEdgeEndpoints(canvasUnitsPerPixel: number): void {
+		this.pruneNativeEdgePathOverrides();
+		const pathGroupEls = Array.from(this.target.containerEl.querySelectorAll<SVGGElement>(".canvas-edges g"))
+			.filter((groupEl) => groupEl.querySelector("path.canvas-display-path"));
+		const arrowGroupEls = Array.from(this.target.containerEl.querySelectorAll<SVGPolygonElement>(".canvas-edges polygon.canvas-path-end"))
+			.map((polygonEl) => polygonEl.parentNode)
+			.filter((node): node is SVGGElement => node instanceof SVGGElement);
+		const edgeCount = Math.min(pathGroupEls.length, arrowGroupEls.length);
+
+		for (let index = 0; index < edgeCount; index++) {
+			const pathGroupEl = pathGroupEls[index];
+			const arrowGroupEl = arrowGroupEls[index];
+
+			if (!pathGroupEl || !arrowGroupEl) {
+				continue;
+			}
+
+			const arrowBasePoint = getCanvasEdgeArrowBasePoint(arrowGroupEl, canvasUnitsPerPixel);
+
+			if (!arrowBasePoint) {
+				continue;
+			}
+
+			for (const pathEl of Array.from(pathGroupEl.querySelectorAll<SVGPathElement>("path.canvas-display-path, path.canvas-interaction-path"))) {
+				const pathData = pathEl.getAttribute("d");
+				const nextPathData = replaceFinalSvgCoordinatePair(pathData, arrowBasePoint);
+
+				if (nextPathData && nextPathData !== pathData) {
+					this.storeNativeEdgePathOverride(pathEl, pathData, nextPathData);
+					pathEl.setAttribute("d", nextPathData);
+				}
+			}
+		}
+	}
+
+	private storeNativeEdgePathOverride(pathEl: SVGPathElement, pathData: string | null, nextPathData: string): void {
+		const existingOverride = this.nativeEdgePathOverrides.get(pathEl);
+		const originalPathData = existingOverride && pathData === existingOverride.patchedPathData
+			? existingOverride.originalPathData
+			: pathData;
+
+		this.nativeEdgePathOverrides.set(pathEl, {
+			originalPathData,
+			patchedPathData: nextPathData,
+		});
+	}
+
+	private restoreNativeEdgePathOverrides(): void {
+		for (const [pathEl, override] of this.nativeEdgePathOverrides) {
+			if (pathEl.isConnected && pathEl.getAttribute("d") === override.patchedPathData) {
+				if (override.originalPathData === null) {
+					pathEl.removeAttribute("d");
+				} else {
+					pathEl.setAttribute("d", override.originalPathData);
+				}
+			}
+		}
+
+		this.nativeEdgePathOverrides.clear();
+	}
+
+	private pruneNativeEdgePathOverrides(): void {
+		for (const pathEl of this.nativeEdgePathOverrides.keys()) {
+			if (!pathEl.isConnected) {
+				this.nativeEdgePathOverrides.delete(pathEl);
+			}
+		}
+	}
+
+	private clearTinyControlScale(): void {
+		const wrapperEl = this.tinyControlScaleWrapperEl;
+		this.restoreNativeEdgePathOverrides();
+
+		if (wrapperEl) {
+			wrapperEl.classList.remove(TINY_CONTROL_SCALE_CLASS);
+			removeCssProperties(wrapperEl, [
+				"--draw-in-canvas-tiny-border-width",
+				"--draw-in-canvas-tiny-card-shadow-y",
+				"--draw-in-canvas-tiny-card-shadow-blur",
+				"--draw-in-canvas-tiny-card-shadow-spread",
+				"--draw-in-canvas-tiny-focus-spread",
+				"--draw-in-canvas-tiny-resizer-size",
+				"--draw-in-canvas-tiny-resizer-half",
+				"--draw-in-canvas-tiny-resizer-offset",
+				"--draw-in-canvas-tiny-connection-border",
+				"--draw-in-canvas-tiny-connection-native-border",
+				"--draw-in-canvas-tiny-connection-native-size",
+				"--draw-in-canvas-tiny-connection-scale",
+				"--draw-in-canvas-tiny-connection-size",
+				"--draw-in-canvas-tiny-connection-half",
+				"--draw-in-canvas-tiny-edge-width",
+				"--draw-in-canvas-tiny-edge-focus-width",
+				"--draw-in-canvas-tiny-edge-hit-width",
+				"--draw-in-canvas-tiny-edge-arrow-scale",
+				"--draw-in-canvas-tiny-snap-line-width",
+				"--draw-in-canvas-tiny-snap-point-scale",
+				"--draw-in-canvas-tiny-selection-border-width",
+				"--draw-in-canvas-tiny-group-selection-border-width",
+				"--draw-in-canvas-tiny-group-selection-radius",
+				"--draw-in-canvas-tiny-label-gap",
+				"--draw-in-canvas-tiny-label-scale",
+			]);
+		}
+
+		this.tinyControlScaleWrapperEl = null;
+		this.tinyControlScaleKey = "";
+	}
+
+	private getCanvasUnitsForScreenPixels(pixels: number): number {
+		return pixels / this.getCanvasScreenScale();
+	}
+
+	private getCanvasScreenScale(): number {
+		const matrix = this.svgEl?.getScreenCTM();
+		return matrix ? getSvgScreenScale(matrix) : 1;
+	}
+
 	private hideStaleElements(): void {
 		const ownedElements = new Set<Element>();
 
@@ -5317,6 +5754,14 @@ export class DrawingLayer {
 
 		if (this.brushControlsEl) {
 			ownedElements.add(this.brushControlsEl);
+		}
+
+		for (const element of this.nativeElementScaleControls.getOwnedElements()) {
+			ownedElements.add(element);
+		}
+
+		if (this.strokeScaleMenuContainerEl) {
+			ownedElements.add(this.strokeScaleMenuContainerEl);
 		}
 
 		hideStaleDrawInCanvasElements(this.target.containerEl, ownedElements);
@@ -5381,6 +5826,79 @@ function average(a: number, b: number): number {
 
 function formatSvgNumber(value: number): string {
 	return roundCoordinate(value).toString();
+}
+
+function formatSvgLength(value: number): string {
+	return Number(value.toFixed(6)).toString();
+}
+
+function formatCssPixels(value: number): string {
+	return `${formatSvgLength(value)}px`;
+}
+
+function removeCssProperties(element: HTMLElement, propertyNames: readonly string[]): void {
+	for (const propertyName of propertyNames) {
+		element.style.removeProperty(propertyName);
+	}
+}
+
+function getCanvasEdgeArrowBasePoint(arrowGroupEl: SVGGElement, arrowScale: number): StrokePoint | null {
+	const polygonEl = arrowGroupEl.querySelector<SVGPolygonElement>("polygon.canvas-path-end");
+	const svgEl = arrowGroupEl.ownerSVGElement;
+	const matrix = arrowGroupEl.getCTM();
+	const arrowLength = polygonEl ? getSvgPolygonVerticalLength(polygonEl) : null;
+
+	if (!svgEl || !matrix || arrowLength === null) {
+		return null;
+	}
+
+	const point = svgEl.createSVGPoint();
+	point.x = 0;
+	point.y = arrowLength * arrowScale;
+	const transformedPoint = point.matrixTransform(matrix);
+
+	if (!Number.isFinite(transformedPoint.x) || !Number.isFinite(transformedPoint.y)) {
+		return null;
+	}
+
+	return {
+		x: roundCoordinate(transformedPoint.x),
+		y: roundCoordinate(transformedPoint.y),
+	};
+}
+
+function getSvgPolygonVerticalLength(polygonEl: SVGPolygonElement): number | null {
+	if (polygonEl.points.numberOfItems === 0) {
+		return null;
+	}
+
+	let minY = Number.POSITIVE_INFINITY;
+	let maxY = Number.NEGATIVE_INFINITY;
+
+	for (let index = 0; index < polygonEl.points.numberOfItems; index++) {
+		const point = polygonEl.points.getItem(index);
+		minY = Math.min(minY, point.y);
+		maxY = Math.max(maxY, point.y);
+	}
+
+	const length = maxY - minY;
+	return Number.isFinite(length) && length > 0 ? length : null;
+}
+
+function replaceFinalSvgCoordinatePair(pathData: string | null, point: StrokePoint): string | null {
+	if (!pathData) {
+		return null;
+	}
+
+	const numberPattern = String.raw`[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?`;
+	const finalCoordinatePattern = new RegExp(`(${numberPattern})([\\s,]+)(${numberPattern})(\\s*)$`, "i");
+	let didReplace = false;
+	const nextPathData = pathData.replace(finalCoordinatePattern, (_match, _x: string, separator: string, _y: string, trailingWhitespace: string) => {
+		didReplace = true;
+		return `${formatSvgLength(point.x)}${separator}${formatSvgLength(point.y)}${trailingWhitespace}`;
+	});
+
+	return didReplace ? nextPathData : null;
 }
 
 function shouldRerenderForSettingsChange(previousSettings: DrawInCanvasSettings, nextSettings: DrawInCanvasSettings): boolean {
@@ -6894,7 +7412,17 @@ function isNativeCanvasContentTarget(target: EventTarget | null): boolean {
 	}
 
 	return Boolean(target.closest(
-		".canvas-node, .canvas-edge, .canvas-card-menu, .canvas-controls, .canvas-control-group, .canvas-control-item",
+		".canvas-node, .canvas-edge, .canvas-card-menu, .canvas-menu, .canvas-menu-container, .canvas-controls, .canvas-control-group, .canvas-control-item",
+	));
+}
+
+function isCanvasControlTarget(target: EventTarget | null): boolean {
+	if (!(target instanceof Element)) {
+		return false;
+	}
+
+	return Boolean(target.closest(
+		".canvas-menu, .canvas-menu-container, .canvas-controls, .canvas-control-group, .canvas-control-item, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette",
 	));
 }
 
@@ -7021,6 +7549,17 @@ function expandBounds(bounds: StrokeBounds, padding: number): StrokeBounds {
 		maxX: bounds.maxX + padding,
 		maxY: bounds.maxY + padding,
 	};
+}
+
+function getBoundsCenter(bounds: StrokeBounds): StrokePoint {
+	return {
+		x: (bounds.minX + bounds.maxX) / 2,
+		y: (bounds.minY + bounds.maxY) / 2,
+	};
+}
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.min(max, Math.max(min, value));
 }
 
 function getResizeHandlePoint(bounds: StrokeBounds, handle: ResizeHandle): StrokePoint {

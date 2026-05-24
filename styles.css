@@ -1229,6 +1229,169 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	stroke-width: 2.5px;
 }
 
+.canvas-menu .draw-in-canvas-scale-button svg {
+	stroke-width: 2.4px;
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node .canvas-node-container {
+	border-width: 0 !important;
+	border-radius: min(var(--radius-m), 4%);
+	box-shadow:
+		inset 0 0 0 var(--draw-in-canvas-tiny-border-width, 1px) var(--background-modifier-border),
+		0 var(--draw-in-canvas-tiny-card-shadow-y, 0.5px) var(--draw-in-canvas-tiny-card-shadow-blur, 1px) var(--draw-in-canvas-tiny-card-shadow-spread, 0.5px) rgb(0 0 0 / 0.1);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-selection {
+	border-width: 0;
+	box-shadow: inset 0 0 0 var(--draw-in-canvas-tiny-selection-border-width, 2px) var(--color-accent);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-selection:not(.mod-group-selection):not(.mod-node-highlight) {
+	z-index: 10000;
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-selection.mod-group-selection {
+	border-radius: var(--draw-in-canvas-tiny-group-selection-radius, 3px);
+	box-shadow: inset 0 0 0 var(--draw-in-canvas-tiny-group-selection-border-width, 3px) hsla(var(--color-accent-hsl), 0.3);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-label {
+	top: var(--draw-in-canvas-tiny-label-gap, -1px);
+	width: calc(var(--canvas-node-width) / var(--draw-in-canvas-tiny-label-scale, var(--zoom-multiplier)));
+	max-width: calc(var(--canvas-node-width) / var(--draw-in-canvas-tiny-label-scale, var(--zoom-multiplier)));
+	transform: translateY(-100%) scale(var(--draw-in-canvas-tiny-label-scale, var(--zoom-multiplier)));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node:is(.is-selected, .is-focused) .canvas-node-container {
+	border-width: 0 !important;
+	box-shadow: 0 0 0 var(--draw-in-canvas-tiny-focus-spread, 2px) var(--color-accent);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node:is(.is-selected, .is-focused).is-themed .canvas-node-container {
+	box-shadow:
+		inset 0 0 0 var(--draw-in-canvas-tiny-border-width, 1px) rgb(var(--canvas-color)),
+		0 0 0 var(--draw-in-canvas-tiny-focus-spread, 2px) rgb(var(--canvas-color));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer {
+	height: var(--draw-in-canvas-tiny-resizer-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
+	width: var(--draw-in-canvas-tiny-resizer-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point {
+	height: var(--draw-in-canvas-tiny-connection-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
+	width: var(--draw-in-canvas-tiny-connection-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="top"] {
+	top: var(--draw-in-canvas-tiny-resizer-offset);
+	width: auto;
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="bottom"] {
+	bottom: var(--draw-in-canvas-tiny-resizer-offset);
+	width: auto;
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="left"] {
+	height: auto;
+	left: var(--draw-in-canvas-tiny-resizer-offset);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="right"] {
+	height: auto;
+	right: var(--draw-in-canvas-tiny-resizer-offset);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="topright"] {
+	right: var(--draw-in-canvas-tiny-resizer-offset);
+	top: var(--draw-in-canvas-tiny-resizer-offset);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="bottomright"] {
+	bottom: var(--draw-in-canvas-tiny-resizer-offset);
+	right: var(--draw-in-canvas-tiny-resizer-offset);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="topleft"] {
+	left: var(--draw-in-canvas-tiny-resizer-offset);
+	top: var(--draw-in-canvas-tiny-resizer-offset);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="bottomleft"] {
+	bottom: var(--draw-in-canvas-tiny-resizer-offset);
+	left: var(--draw-in-canvas-tiny-resizer-offset);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="top"],
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="bottom"] {
+	left: calc(50% - var(--draw-in-canvas-tiny-connection-half));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="top"] {
+	top: calc(var(--draw-in-canvas-tiny-resizer-half) - var(--draw-in-canvas-tiny-connection-half));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="bottom"] {
+	bottom: calc(var(--draw-in-canvas-tiny-resizer-half) - var(--draw-in-canvas-tiny-connection-half));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="left"],
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="right"] {
+	top: calc(50% - var(--draw-in-canvas-tiny-connection-half));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="left"] {
+	left: calc(var(--draw-in-canvas-tiny-resizer-half) - var(--draw-in-canvas-tiny-connection-half));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="right"] {
+	right: calc(var(--draw-in-canvas-tiny-resizer-half) - var(--draw-in-canvas-tiny-connection-half));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point::after {
+	border: var(--draw-in-canvas-tiny-connection-native-border, 3px) solid var(--background-modifier-border);
+	height: var(--draw-in-canvas-tiny-connection-native-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%) scale(var(--draw-in-canvas-tiny-connection-scale, 1));
+	transform-origin: center;
+	width: var(--draw-in-canvas-tiny-connection-native-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-edges path.canvas-display-path {
+	stroke-width: var(--draw-in-canvas-tiny-edge-width, calc(2px * var(--zoom-multiplier)));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-edges path.canvas-interaction-path {
+	stroke-width: var(--draw-in-canvas-tiny-edge-hit-width, calc(24px * var(--zoom-multiplier)));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-edges polygon.canvas-path-end {
+	stroke-width: var(--draw-in-canvas-tiny-snap-line-width, 1px);
+	transform: scale(var(--draw-in-canvas-tiny-edge-arrow-scale, var(--zoom-multiplier)));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-edges g.is-focused path.canvas-display-path,
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas:not(.is-connecting) .canvas-edges g:hover path.canvas-display-path {
+	stroke-width: var(--draw-in-canvas-tiny-edge-focus-width, calc(5.5px * var(--zoom-multiplier)));
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-snaps line {
+	stroke-width: var(--draw-in-canvas-tiny-snap-line-width, 1px);
+}
+
+.canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-snaps circle {
+	transform: scale(var(--draw-in-canvas-tiny-snap-point-scale, 1));
+	transform-box: fill-box;
+	transform-origin: center;
+}
+
+.canvas-node-content.draw-in-canvas-scaled-node-content .markdown-preview-view {
+	overflow: hidden;
+	scrollbar-gutter: auto;
+}
+
 .draw-in-canvas-render-layer {
 	position: absolute;
 	top: 0;

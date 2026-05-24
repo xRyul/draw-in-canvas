@@ -53,13 +53,16 @@ pnpm dev
 7. Leave drawing mode, then select and drag an existing stroke to move it.
 8. Drag on an empty canvas area to use Obsidian's native marquee selection; it selects native canvas cards and Draw in Canvas strokes together.
 9. Drag from inside the selected bounding box to move the whole selected group, even when the pointer is not directly on a stroke line.
-10. Drag a corner handle on the selected bounding box to resize selected strokes larger or smaller.
+10. Drag a corner handle on the selected bounding box to resize selected strokes larger or smaller. If **Settings → Draw in canvas → Allow tiny canvas items** is enabled, selected strokes also show +/− buttons for quick scaling.
 11. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
 12. Use `Cmd`/`Ctrl`+`Z` to undo and `Cmd`/`Ctrl`+`Shift`+`Z` or `Ctrl`+`Y` to redo Draw in Canvas actions from the current session. The canvas **Undo** / **Redo** buttons work too. Use **Clear drawings from active canvas** as needed.
+13. Optional: enable **Allow tiny canvas items** in the plugin settings to resize native canvas cards, groups, and Draw in Canvas strokes below Obsidian's default size limit. This also adds +/− buttons to native canvas selections and allows closer zoom on tiny items.
 
 ## Notes
 
 - Drawings are saved into each `.canvas` file under `drawInCanvas`.
 - The plugin is local-only and does not make network requests.
 - The Obsidian canvas DOM is internal API, so this prototype may need small selector updates if Obsidian changes its canvas markup.
+- The **Allow tiny canvas items** setting patches Obsidian's internal Canvas behavior only while the plugin is active and the setting is enabled.
+- Scaling native text cards with the +/− buttons stores a `drawInCanvasScale` value on those canvas nodes so text remains proportionally scaled in very small cards.
 - The handwritten stroke controls are ported into this plugin from the local perfect-freehand source; no runtime dependency is installed.

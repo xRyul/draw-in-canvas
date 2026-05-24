@@ -83,6 +83,7 @@ export interface DrawInCanvasSettings {
 	strokeOpacity: number;
 	beautifulStrokes: boolean;
 	usePenCursorFallback: boolean;
+	allowTinyCanvasElements: boolean;
 	strokeThinning: number;
 	strokeStreamline: number;
 	strokeSmoothing: number;
@@ -97,6 +98,7 @@ export const DEFAULT_SETTINGS: DrawInCanvasSettings = {
 	strokeOpacity: DEFAULT_STROKE_OPACITY,
 	beautifulStrokes: false,
 	usePenCursorFallback: true,
+	allowTinyCanvasElements: false,
 	strokeThinning: DEFAULT_FREEHAND_THINNING,
 	strokeStreamline: DEFAULT_FREEHAND_STREAMLINE,
 	strokeSmoothing: DEFAULT_FREEHAND_SMOOTHING,
@@ -160,6 +162,7 @@ export function normalizeDrawInCanvasSettings(settings: Partial<DrawInCanvasSett
 		strokeOpacity: normalizeStrokeOpacity(settings.strokeOpacity),
 		beautifulStrokes: settings.beautifulStrokes === true,
 		usePenCursorFallback: settings.usePenCursorFallback !== false,
+		allowTinyCanvasElements: settings.allowTinyCanvasElements === true,
 		strokeThinning: normalizeFreehandSliderValue("strokeThinning", settings.strokeThinning),
 		strokeStreamline: normalizeFreehandSliderValue("strokeStreamline", settings.strokeStreamline),
 		strokeSmoothing: normalizeFreehandSliderValue("strokeSmoothing", settings.strokeSmoothing),
@@ -251,6 +254,15 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.usePenCursorFallback)
 				.onChange((value) => {
 					this.plugin.setPenCursorFallback(value);
+				}));
+
+		new Setting(containerEl)
+			.setName("Allow tiny canvas items")
+			.setDesc("Lower Obsidian's canvas item size limit so native cards, groups, and plugin strokes can be resized much smaller. Also lets native canvas zoom go past the normal zoom-in limit, adds +/− size buttons to the native selection menu, and keeps shift-resizing proportional while this plugin is active.")
+			.addToggle((toggle) => toggle
+				.setValue(this.plugin.settings.allowTinyCanvasElements)
+				.onChange((value) => {
+					this.plugin.setAllowTinyCanvasElements(value);
 				}));
 
 		const noteEl = document.createElement("p");

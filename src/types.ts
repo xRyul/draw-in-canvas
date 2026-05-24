@@ -43,7 +43,7 @@ export function createStrokeId(): string {
 }
 
 export function roundCoordinate(value: number): number {
-	return Math.round(value * 100) / 100;
+	return Math.round(value * 10000) / 10000;
 }
 
 export function normalizeStrokePressure(value: unknown): number | undefined {

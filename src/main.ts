@@ -205,6 +205,12 @@ export default class DrawInCanvasPlugin extends Plugin {
 		void this.saveSettings();
 	}
 
+	setAllowTinyCanvasElements(enabled: boolean): void {
+		this.settings.allowTinyCanvasElements = enabled;
+		this.refreshActiveLayerSettings();
+		void this.saveSettings();
+	}
+
 	async loadSettings(): Promise<void> {
 		this.settings = normalizeDrawInCanvasSettings(await this.loadData() as Partial<DrawInCanvasSettings>);
 	}
