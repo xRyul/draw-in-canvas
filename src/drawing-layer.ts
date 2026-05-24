@@ -1710,9 +1710,42 @@ export class DrawingLayer {
 			this.addListener(labelEl, "keydown", this.handleCurrentColorHexKeyDown),
 		);
 
-		currentColorEl.append(previewEl, labelEl);
+		const valuesEl = document.createElement("div");
+		valuesEl.classList.add("draw-in-canvas-current-color-values");
+		valuesEl.append(labelEl, this.createColorValueInputEl());
+
+		currentColorEl.append(previewEl, valuesEl);
 		headerEl.append(titleEl, currentColorEl);
 		return headerEl;
+	}
+
+	private createColorValueInputEl(): HTMLInputElement {
+		const modeConfig = getColorValueModeConfig(this.colorValueMode);
+		const inputEl = document.createElement("input");
+		inputEl.classList.add("draw-in-canvas-hsl-value-input", "draw-in-canvas-current-color-value-input");
+		inputEl.type = "text";
+		inputEl.inputMode = "text";
+		inputEl.maxLength = modeConfig.maxLength;
+		inputEl.placeholder = modeConfig.placeholder;
+		inputEl.spellcheck = false;
+		inputEl.readOnly = true;
+		inputEl.value = this.getColorValueInputText();
+		inputEl.title = "Click to copy; double-click to edit.";
+		inputEl.setAttribute("aria-label", modeConfig.ariaLabel);
+		setHslInputValidity(inputEl, true);
+
+		this.colorPaletteDisposers.push(
+			this.addListener(inputEl, "pointerdown", this.handleCurrentColorHslPointerDown),
+			this.addListener(inputEl, "click", this.handleCurrentColorHslClick),
+			this.addListener(inputEl, "dblclick", this.handleCurrentColorHslDoubleClick),
+			this.addListener(inputEl, "focus", this.handleCurrentColorHslFocus),
+			this.addListener(inputEl, "input", this.handleCurrentColorHslInput),
+			this.addListener(inputEl, "change", this.handleCurrentColorHslChange),
+			this.addListener(inputEl, "blur", this.handleCurrentColorHslChange),
+			this.addListener(inputEl, "keydown", this.handleCurrentColorHslKeyDown),
+		);
+
+		return inputEl;
 	}
 
 	private createColorDiscPanelEl(panelId: string): HTMLElement {
@@ -1779,8 +1812,6 @@ export class DrawingLayer {
 		const controlEl = document.createElement("div");
 		controlEl.classList.add("draw-in-canvas-color-disc-palette", "draw-in-canvas-hsl-controls");
 
-		const modeConfig = getColorValueModeConfig(this.colorValueMode);
-
 		const headerEl = document.createElement("div");
 		headerEl.classList.add("draw-in-canvas-hsl-header");
 
@@ -1806,31 +1837,7 @@ export class DrawingLayer {
 			);
 		}
 
-		const inputEl = document.createElement("input");
-		inputEl.classList.add("draw-in-canvas-hsl-value-input");
-		inputEl.type = "text";
-		inputEl.inputMode = "text";
-		inputEl.maxLength = modeConfig.maxLength;
-		inputEl.placeholder = modeConfig.placeholder;
-		inputEl.spellcheck = false;
-		inputEl.readOnly = true;
-		inputEl.value = this.getColorValueInputText();
-		inputEl.title = "Click to copy; double-click to edit.";
-		inputEl.setAttribute("aria-label", modeConfig.ariaLabel);
-		setHslInputValidity(inputEl, true);
-
-		this.colorPaletteDisposers.push(
-			this.addListener(inputEl, "pointerdown", this.handleCurrentColorHslPointerDown),
-			this.addListener(inputEl, "click", this.handleCurrentColorHslClick),
-			this.addListener(inputEl, "dblclick", this.handleCurrentColorHslDoubleClick),
-			this.addListener(inputEl, "focus", this.handleCurrentColorHslFocus),
-			this.addListener(inputEl, "input", this.handleCurrentColorHslInput),
-			this.addListener(inputEl, "change", this.handleCurrentColorHslChange),
-			this.addListener(inputEl, "blur", this.handleCurrentColorHslChange),
-			this.addListener(inputEl, "keydown", this.handleCurrentColorHslKeyDown),
-		);
-
-		headerEl.append(modeGroupEl, inputEl);
+		headerEl.appendChild(modeGroupEl);
 
 		const slidersEl = document.createElement("div");
 		slidersEl.classList.add("draw-in-canvas-hsl-slider-list");
