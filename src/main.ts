@@ -42,6 +42,14 @@ export default class DrawInCanvasPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: "redo-last-stroke",
+			name: "Redo last canvas drawing stroke",
+			callback: () => {
+				void this.redoLastStroke();
+			},
+		});
+
+		this.addCommand({
 			id: "clear-drawings",
 			name: "Clear drawings from active canvas",
 			callback: () => {
@@ -110,6 +118,18 @@ export default class DrawInCanvasPlugin extends Plugin {
 
 		const didUndo = await layer.undoLastStroke();
 		new Notice(didUndo ? "Last Draw in canvas stroke removed." : "No Draw in canvas strokes to undo.");
+	}
+
+	async redoLastStroke(): Promise<void> {
+		const layer = await this.ensureActiveCanvasLayer();
+
+		if (!layer) {
+			new Notice("Open a canvas file before redoing a stroke.");
+			return;
+		}
+
+		const didRedo = await layer.redoLastStroke();
+		new Notice(didRedo ? "Last Draw in canvas stroke restored." : "No Draw in canvas strokes to redo.");
 	}
 
 	refreshActiveLayerSettings(): void {

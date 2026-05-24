@@ -55,7 +55,7 @@ pnpm dev
 9. Drag from inside the selected bounding box to move the whole selected group, even when the pointer is not directly on a stroke line.
 10. Drag a corner handle on the selected bounding box to resize selected strokes larger or smaller.
 11. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
-12. Use the canvas **Undo** / **Redo** buttons for Draw in Canvas actions from the current session, or use **Clear drawings from active canvas** as needed.
+12. Use `Cmd`/`Ctrl`+`Z` to undo and `Cmd`/`Ctrl`+`Shift`+`Z` or `Ctrl`+`Y` to redo Draw in Canvas actions from the current session. The canvas **Undo** / **Redo** buttons work too. Use **Clear drawings from active canvas** as needed.
 
 ## Notes
 

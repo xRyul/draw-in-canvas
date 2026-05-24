@@ -324,11 +324,16 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .draw-in-canvas-color-palette {
+	--draw-in-canvas-color-palette-width: 220px;
+	--draw-in-canvas-color-disc-size: 206px;
+	--draw-in-canvas-color-palette-gap: 5px;
+	--draw-in-canvas-color-palette-padding: 6px;
+
 	grid-template-rows: auto minmax(0, 1fr) auto;
-	width: min(264px, calc(100vw - 10px));
+	width: min(var(--draw-in-canvas-color-palette-width), calc(100vw - 10px));
 	max-height: calc(100vh - 10px);
-	gap: 6px;
-	padding: 7px;
+	gap: var(--draw-in-canvas-color-palette-gap);
+	padding: var(--draw-in-canvas-color-palette-padding);
 	overflow: hidden;
 }
 
@@ -336,11 +341,11 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 6px;
+	gap: 5px;
 }
 
 .draw-in-canvas-color-palette-title {
-	font-size: var(--font-ui-small);
+	font-size: var(--font-ui-smaller);
 	font-weight: 700;
 	line-height: 1.2;
 	color: var(--text-normal);
@@ -350,7 +355,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: inline-flex;
 	align-items: center;
 	min-width: 0;
-	gap: 4px;
+	flex: 0 0 auto;
+	gap: 3px;
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
 	font-variant-numeric: tabular-nums;
@@ -359,22 +365,25 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-current-color-preview {
 	display: block;
-	width: 16px;
-	height: 16px;
+	width: 14px;
+	height: 14px;
 	border: 1px solid var(--background-modifier-border);
-	border-radius: 5px;
+	border-radius: 4px;
 	background: var(--draw-in-canvas-current-color, var(--interactive-accent));
 	box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
 	flex: 0 0 auto;
 }
 
-.draw-in-canvas-current-color-label {
+.draw-in-canvas-color-palette .draw-in-canvas-current-color-label {
 	box-sizing: border-box;
-	width: 70px;
-	max-width: 70px;
-	min-width: 0;
+	width: 78px;
+	max-width: 78px;
+	min-width: 78px;
 	height: 22px;
-	padding: 1px 3px;
+	min-height: 22px;
+	max-height: 22px;
+	padding: 0 5px;
+	flex: 0 0 78px;
 	overflow: hidden;
 	border: 1px solid transparent;
 	border-radius: var(--radius-s);
@@ -385,7 +394,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	color: inherit;
 	font: inherit;
 	font-variant-numeric: tabular-nums;
-	line-height: 1;
+	line-height: 20px;
 	text-align: left;
 	text-overflow: ellipsis;
 	text-transform: uppercase;
@@ -421,7 +430,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-color-palette-panel {
 	display: grid;
-	gap: 6px;
+	gap: 5px;
 	width: 100%;
 }
 
@@ -442,8 +451,9 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	--draw-in-canvas-color-wheel-disc-y: 50%;
 
 	position: relative;
+	justify-self: center;
 	width: 100%;
-	max-width: 250px;
+	max-width: var(--draw-in-canvas-color-disc-size);
 	aspect-ratio: 1;
 	border-radius: 50%;
 	user-select: none;
@@ -478,20 +488,20 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	background:
 		linear-gradient(to top, #000 0%, rgb(0 0 0 / 0) 100%),
 		linear-gradient(to right, #fff 0%, var(--draw-in-canvas-color-wheel-hue-color) 100%);
-	box-shadow: 0 0 0 5px var(--background-primary), inset 0 0 0 1px rgb(255 255 255 / 0.16);
+	box-shadow: 0 0 0 4px var(--background-primary), inset 0 0 0 1px rgb(255 255 255 / 0.16);
 }
 
 .draw-in-canvas-color-wheel-disc-field:focus-visible {
 	outline: none;
-	box-shadow: 0 0 0 5px var(--background-primary), 0 0 0 7px var(--interactive-accent), inset 0 0 0 1px rgb(255 255 255 / 0.16);
+	box-shadow: 0 0 0 4px var(--background-primary), 0 0 0 6px var(--interactive-accent), inset 0 0 0 1px rgb(255 255 255 / 0.16);
 }
 
 .draw-in-canvas-color-wheel-thumb {
 	position: absolute;
 	z-index: 3;
 	box-sizing: border-box;
-	width: 14px;
-	height: 14px;
+	width: 12px;
+	height: 12px;
 	border: 2px solid #fff;
 	border-radius: 50%;
 	background: var(--draw-in-canvas-color-wheel-selected-color);
@@ -503,8 +513,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	left: var(--draw-in-canvas-color-wheel-hue-x);
 	top: var(--draw-in-canvas-color-wheel-hue-y);
 	background: var(--draw-in-canvas-color-wheel-hue-color);
-	width: calc(22% - 5px);
-	height: calc(22% - 5px);
+	width: calc(18% - 4px);
+	height: calc(18% - 4px);
 	border-width: 2px;
 	transform: translate(-50%, -50%);
 }
@@ -512,8 +522,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-color-wheel-disc-thumb {
 	left: var(--draw-in-canvas-color-wheel-disc-x);
 	top: var(--draw-in-canvas-color-wheel-disc-y);
-	width: 14px;
-	height: 14px;
+	width: 12px;
+	height: 12px;
 	z-index: 4;
 	transform: translate(-50%, -50%);
 }
@@ -521,7 +531,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-color-disc-palette {
 	display: grid;
 	width: 100%;
-	gap: 4px;
+	gap: 3px;
 }
 
 .draw-in-canvas-color-disc-palette-title {
@@ -529,6 +539,28 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	font-weight: 600;
 	line-height: 1.2;
 	color: var(--text-muted);
+}
+
+.draw-in-canvas-hsl-controls {
+	gap: 4px;
+}
+
+.draw-in-canvas-hsl-slider-list {
+	display: grid;
+	gap: 5px;
+}
+
+.draw-in-canvas-hsl-slider-control {
+	gap: 2px 6px;
+}
+
+.draw-in-canvas-hsl-slider-value {
+	min-width: 38px;
+	padding: 0 6px;
+}
+
+.draw-in-canvas-color-palette input.draw-in-canvas-hsl-slider[type="range"] {
+	width: 100%;
 }
 
 .draw-in-canvas-color-disc-palette-swatches {
@@ -558,7 +590,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-color-history-swatches.is-empty {
 	display: block;
-	padding: 5px 6px;
+	padding: 4px 5px;
 	border-style: dashed;
 	overflow: visible;
 }
@@ -597,8 +629,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-color-palette .draw-in-canvas-color-swatch {
 	box-sizing: border-box;
-	width: 24px;
-	height: 24px;
+	width: 20px;
+	height: 20px;
 	padding: 0;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 0 !important;
@@ -670,19 +702,27 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-color-picker-icon {
 	position: relative;
 	z-index: 1;
-	display: grid;
-	place-items: center;
-	width: 12px;
-	height: 12px;
-	border-radius: 50%;
-	background: color-mix(in srgb, var(--background-primary) 84%, transparent);
-	filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.25));
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	color: var(--text-normal);
+	line-height: 0;
+	filter: drop-shadow(0 1px 1px rgb(255 255 255 / 0.32)) drop-shadow(0 1px 1px rgb(0 0 0 / 0.28));
 	pointer-events: none;
+}
+
+.draw-in-canvas-color-picker-icon svg {
+	display: block;
+	width: 13px;
+	height: 13px;
+	stroke-width: 2.25px;
 }
 
 .draw-in-canvas-custom-color-control {
 	display: grid;
-	gap: 5px;
+	gap: 4px;
 	width: 100%;
 	margin-top: 1px;
 }
@@ -691,7 +731,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: grid;
 	grid-template-columns: auto minmax(0, 1fr);
 	align-items: center;
-	gap: 5px;
+	gap: 4px;
 	font-size: var(--font-ui-smaller);
 	line-height: 1.2;
 	color: var(--text-muted);
@@ -699,9 +739,9 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-custom-color-hex-input {
 	width: 100%;
-	height: 22px;
+	height: 20px;
 	box-sizing: border-box;
-	padding: 0 5px;
+	padding: 0 4px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
 	background: var(--background-secondary);
@@ -724,13 +764,13 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-custom-color-shades {
 	display: grid;
 	grid-template-columns: repeat(6, minmax(0, 1fr));
-	gap: 3px;
+	gap: 2px;
 }
 
 .draw-in-canvas-custom-color-shade {
 	box-sizing: border-box;
 	width: 100%;
-	height: 16px;
+	height: 14px;
 	padding: 0;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 0;
@@ -754,7 +794,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 2px;
-	padding-top: 5px;
+	padding-top: 4px;
 	border-top: 1px solid var(--background-modifier-border);
 }
 
@@ -762,8 +802,8 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	display: grid;
 	place-items: center;
 	min-width: 0;
-	height: 24px;
-	padding: 0 5px;
+	height: 22px;
+	padding: 0 4px;
 	border: 0;
 	border-radius: var(--radius-s);
 	appearance: none;
@@ -848,8 +888,14 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	accent-color: var(--interactive-accent);
 }
 
-.draw-in-canvas-palette-reset-button {
-	padding: 2px 4px;
+.draw-in-canvas-stroke-settings-palette .draw-in-canvas-palette-reset-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 22px;
+	min-height: 22px;
+	max-height: 22px;
+	padding: 0 6px;
 	border: 0;
 	border-radius: var(--radius-s);
 	appearance: none;
@@ -857,13 +903,14 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	background: transparent;
 	box-shadow: none;
 	color: var(--text-muted);
+	font-family: inherit;
 	font-size: var(--font-ui-smaller);
-	line-height: 1;
+	line-height: 20px;
 	cursor: pointer;
 }
 
-.draw-in-canvas-palette-reset-button:hover,
-.draw-in-canvas-palette-reset-button:focus-visible {
+.draw-in-canvas-stroke-settings-palette .draw-in-canvas-palette-reset-button:hover,
+.draw-in-canvas-stroke-settings-palette .draw-in-canvas-palette-reset-button:focus-visible {
 	background: var(--background-modifier-hover);
 	color: var(--text-normal);
 	outline: none;

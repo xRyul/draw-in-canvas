@@ -89,6 +89,16 @@ const COLOR_WHEEL_HUE_KEYBOARD_LARGE_STEP = 15;
 const COLOR_WHEEL_KEYBOARD_STEP = 0.02;
 const COLOR_WHEEL_KEYBOARD_LARGE_STEP = 0.1;
 const COLOR_WHEEL_DISC_THUMB_SIZE_PX = 14;
+const HSL_HUE_MIN = 0;
+const HSL_HUE_MAX = 359;
+const HSL_PERCENT_MIN = 0;
+const HSL_PERCENT_MAX = 100;
+const HSL_SLIDER_STEP = 1;
+const HSL_SLIDER_SETTINGS = [
+	{id: "hue", label: "Hue", min: HSL_HUE_MIN, max: HSL_HUE_MAX, step: HSL_SLIDER_STEP, ariaLabel: "Stroke color HSL hue"},
+	{id: "saturation", label: "Saturation", min: HSL_PERCENT_MIN, max: HSL_PERCENT_MAX, step: HSL_SLIDER_STEP, ariaLabel: "Stroke color HSL saturation"},
+	{id: "lightness", label: "Lightness", min: HSL_PERCENT_MIN, max: HSL_PERCENT_MAX, step: HSL_SLIDER_STEP, ariaLabel: "Stroke color HSL lightness"},
+] as const;
 const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const BRUSH_POPOVER_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
@@ -112,10 +122,18 @@ interface HsvColor {
 	v: number;
 }
 
+interface HslColor {
+	h: number;
+	s: number;
+	l: number;
+}
+
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 type BrushSliderSetting = "size" | "opacity";
 type ColorPaletteTab = typeof COLOR_PALETTE_TABS[number]["id"];
 type ColorWheelControl = "hue" | "disc";
+type HslSliderConfig = typeof HSL_SLIDER_SETTINGS[number];
+type HslSliderSetting = HslSliderConfig["id"];
 type CanvasPointMapper = (event: PointerEvent) => StrokePoint;
 
 interface StrokeRenderOptions {
@@ -131,6 +149,8 @@ type DrawingHistoryAction =
 	| {type: "move-stroke"; strokeId: string; delta: StrokePoint}
 	| {type: "move-strokes"; strokeIds: string[]; delta: StrokePoint}
 	| {type: "resize-strokes"; strokeIds: string[]; origin: StrokePoint; scale: number};
+
+type DrawingHistoryShortcutAction = "undo" | "redo";
 
 interface StrokeDragState {
 	pointerId: number;
@@ -1082,6 +1102,7 @@ export class DrawingLayer {
 
 		this.syncCustomColorControls();
 		this.syncColorWheelControls();
+		this.syncHslSliderControls();
 		this.syncColorPaletteHeader();
 	}
 
@@ -1285,6 +1306,36 @@ export class DrawingLayer {
 		}
 	}
 
+	private syncHslSliderControls(): void {
+		const sliderEls = this.colorPaletteEl?.querySelectorAll<HTMLInputElement>("[data-color-hsl-slider]") ?? [];
+
+		if (sliderEls.length === 0) {
+			return;
+		}
+
+		const hslColor = getColorWheelHsl(this.customColorHex, this.colorWheelHsv.h);
+
+		for (const sliderEl of Array.from(sliderEls)) {
+			const setting = getHslSliderSetting(sliderEl.dataset.colorHslSlider);
+
+			if (!setting) {
+				continue;
+			}
+
+			const value = getHslSliderValue(setting, hslColor);
+			const valueText = formatHslSliderValue(setting, value);
+			const valueEl = this.colorPaletteEl?.querySelector<HTMLElement>(`[data-color-hsl-value="${setting}"]`);
+
+			sliderEl.value = value.toString();
+			sliderEl.setAttribute("aria-valuenow", value.toString());
+			sliderEl.setAttribute("aria-valuetext", getHslSliderAriaValue(setting, value));
+
+			if (valueEl) {
+				valueEl.textContent = valueText;
+			}
+		}
+	}
+
 	private syncColorPaletteHeader(): void {
 		const previewEls = this.colorPaletteEl?.querySelectorAll<HTMLElement>(".draw-in-canvas-current-color-preview") ?? [];
 		const labelEls = this.colorPaletteEl?.querySelectorAll<HTMLElement>(".draw-in-canvas-current-color-label") ?? [];
@@ -1352,7 +1403,25 @@ export class DrawingLayer {
 		this.customColorHex = hexColor;
 		this.setStrokeColor(hexColor);
 		this.syncColorWheelControls();
+		this.syncHslSliderControls();
 		this.syncColorPaletteHeader();
+	}
+
+	private setHslColor(color: HslColor): void {
+		const nextColor = normalizeHslColor(color);
+		const hexColor = hslToHex(nextColor);
+
+		this.colorWheelHsv = getColorWheelHsv(hexColor, nextColor.h);
+		this.customColorHex = hexColor;
+		this.setStrokeColor(hexColor);
+		this.syncColorWheelControls();
+		this.syncHslSliderControls();
+		this.syncColorPaletteHeader();
+	}
+
+	private setHslSliderValue(setting: HslSliderSetting, value: number): void {
+		const currentColor = getColorWheelHsl(this.customColorHex, this.colorWheelHsv.h);
+		this.setHslColor(getHslColorWithSliderValue(currentColor, setting, value));
 	}
 
 	private setStrokeColor(color: string): void {
@@ -1365,6 +1434,7 @@ export class DrawingLayer {
 
 		if (colorsMatch(color, this.settings.strokeColor)) {
 			this.syncColorWheelControls();
+			this.syncHslSliderControls();
 			this.syncColorPaletteHeader();
 			return;
 		}
@@ -1473,11 +1543,70 @@ export class DrawingLayer {
 		wheelEl.append(hueControlEl, discControlEl);
 		panelEl.append(
 			wheelEl,
+			this.createHslSliderControlsEl(),
 			this.createColorHistorySectionEl(),
 			this.createColorDiscPaletteEl(),
 			this.createCustomColorShadesEl("Selected color shades"),
 		);
 		return panelEl;
+	}
+
+	private createHslSliderControlsEl(): HTMLElement {
+		const controlEl = document.createElement("div");
+		controlEl.classList.add("draw-in-canvas-color-disc-palette", "draw-in-canvas-hsl-controls");
+
+		const titleEl = document.createElement("div");
+		titleEl.classList.add("draw-in-canvas-color-disc-palette-title");
+		titleEl.textContent = "HSL";
+
+		const slidersEl = document.createElement("div");
+		slidersEl.classList.add("draw-in-canvas-hsl-slider-list");
+
+		const hslColor = getColorWheelHsl(this.customColorHex, this.colorWheelHsv.h);
+
+		for (const setting of HSL_SLIDER_SETTINGS) {
+			slidersEl.appendChild(this.createHslSliderControlEl(setting, hslColor));
+		}
+
+		controlEl.append(titleEl, slidersEl);
+		return controlEl;
+	}
+
+	private createHslSliderControlEl(setting: HslSliderConfig, color: HslColor): HTMLElement {
+		const inputId = createStrokeId();
+		const value = getHslSliderValue(setting.id, color);
+		const sliderEl = document.createElement("input");
+		sliderEl.id = inputId;
+		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-hsl-slider");
+		sliderEl.type = "range";
+		sliderEl.min = setting.min.toString();
+		sliderEl.max = setting.max.toString();
+		sliderEl.step = setting.step.toString();
+		sliderEl.value = value.toString();
+		sliderEl.dataset.colorHslSlider = setting.id;
+		sliderEl.setAttribute("aria-label", setting.ariaLabel);
+		sliderEl.setAttribute("aria-valuetext", getHslSliderAriaValue(setting.id, value));
+
+		this.colorPaletteDisposers.push(
+			this.addListener(sliderEl, "pointerdown", this.handleHslSliderPointerDown),
+			this.addListener(sliderEl, "keydown", this.handleStrokeWidthSliderKeyDown),
+			this.addListener(sliderEl, "input", this.handleHslSliderInput),
+			this.addListener(sliderEl, "change", this.handleHslSliderChange),
+		);
+
+		const controlEl = createSliderControlEl(
+			inputId,
+			setting.label,
+			"draw-in-canvas-stroke-width-value",
+			formatHslSliderValue(setting.id, value),
+			sliderEl,
+		);
+		const valueEl = controlEl.querySelector("output");
+
+		controlEl.classList.add("draw-in-canvas-hsl-slider-control");
+		valueEl?.classList.add("draw-in-canvas-hsl-slider-value");
+		valueEl?.setAttribute("data-color-hsl-value", setting.id);
+		return controlEl;
 	}
 
 	private createColorHistorySectionEl(): HTMLElement {
@@ -2100,6 +2229,7 @@ export class DrawingLayer {
 			this.addListener(strokeInteractionEl, "pointerup", this.handleStrokePointerUp, true),
 			this.addListener(strokeInteractionEl, "pointercancel", this.handleStrokePointerUp, true),
 			this.addListener(strokeInteractionEl, "pointerleave", this.handleStrokePointerLeave, true),
+			this.addListener(window, "keydown", this.handleWindowKeyDown, true),
 			this.addListener(document, "keydown", this.handleDocumentKeyDown, true),
 			this.addListener(document, "keyup", this.handleDocumentKeyUp, true),
 			this.addListener(window, "blur", this.handleWindowBlur),
@@ -2976,6 +3106,43 @@ export class DrawingLayer {
 			: {...this.colorWheelHsv, ...getColorWheelDiscValuesFromPointer(controlEl, event.clientX, event.clientY)};
 
 		this.setColorWheelHsv(nextColor);
+	}
+
+	private readonly handleHslSliderPointerDown = (event: PointerEvent): void => {
+		event.stopPropagation();
+	};
+
+	private readonly handleHslSliderInput = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		this.updateHslSliderFromInput(event.currentTarget);
+	};
+
+	private readonly handleHslSliderChange = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		if (this.updateHslSliderFromInput(event.currentTarget)) {
+			this.recordColorHistory(this.customColorHex);
+		}
+	};
+
+	private updateHslSliderFromInput(inputEl: HTMLInputElement): boolean {
+		const setting = getHslSliderSetting(inputEl.dataset.colorHslSlider);
+
+		if (!setting) {
+			return false;
+		}
+
+		this.setHslSliderValue(setting, Number(inputEl.value));
+		return true;
 	}
 
 	private readonly handleCurrentColorHexPointerDown = (event: PointerEvent): void => {
@@ -3931,8 +4098,43 @@ export class DrawingLayer {
 		this.nativeSelectionDragState = null;
 	}
 
+	private readonly handleWindowKeyDown = (event: KeyboardEvent): void => {
+		this.handleDrawingHistoryShortcut(event);
+	};
+
+	private handleDrawingHistoryShortcut(event: KeyboardEvent): boolean {
+		const action = getDrawingHistoryShortcutAction(event);
+
+		if (!action || !this.shouldUseDrawingHistoryShortcut(event, action)) {
+			return false;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		event.stopImmediatePropagation();
+
+		if (action === "undo") {
+			void this.undoLastStroke();
+		} else {
+			void this.redoLastStroke();
+		}
+
+		return true;
+	}
+
+	private shouldUseDrawingHistoryShortcut(event: KeyboardEvent, action: DrawingHistoryShortcutAction): boolean {
+		if (isEditableEventTarget(event.target) || this.app.workspace.getMostRecentLeaf() !== this.target.leaf) {
+			return false;
+		}
+
+		return action === "undo" ? this.undoStack.length > 0 : this.redoStack.length > 0;
+	}
 
 	private readonly handleDocumentKeyDown = (event: KeyboardEvent): void => {
+		if (this.handleDrawingHistoryShortcut(event)) {
+			return;
+		}
+
 		if (this.shouldUseSelectToolShortcut(event)) {
 			event.preventDefault();
 			event.stopPropagation();
@@ -4914,6 +5116,81 @@ function getColorWheelControl(value: string | undefined): ColorWheelControl | nu
 	return value === "hue" || value === "disc" ? value : null;
 }
 
+function getHslSliderSetting(value: string | undefined): HslSliderSetting | null {
+	return HSL_SLIDER_SETTINGS.some((slider) => slider.id === value) ? value as HslSliderSetting : null;
+}
+
+function getHslSliderValue(setting: HslSliderSetting, color: HslColor): number {
+	switch (setting) {
+		case "hue": {
+			const hue = Math.round(normalizeHue(color.h));
+			return Math.min(HSL_HUE_MAX, hue);
+		}
+
+		case "saturation":
+			return Math.round(clampUnit(color.s) * 100);
+
+		case "lightness":
+			return Math.round(clampUnit(color.l) * 100);
+
+		default:
+			return HSL_PERCENT_MIN;
+	}
+}
+
+function getHslColorWithSliderValue(color: HslColor, setting: HslSliderSetting, value: number): HslColor {
+	const normalizedValue = normalizeHslSliderValue(setting, value);
+
+	switch (setting) {
+		case "hue":
+			return {...color, h: normalizedValue};
+
+		case "saturation":
+			return {...color, s: normalizedValue / 100};
+
+		case "lightness":
+			return {...color, l: normalizedValue / 100};
+
+		default:
+			return color;
+	}
+}
+
+function normalizeHslSliderValue(setting: HslSliderSetting, value: number): number {
+	const numericValue = Number.isFinite(value) ? value : HSL_PERCENT_MIN;
+	const min = setting === "hue" ? HSL_HUE_MIN : HSL_PERCENT_MIN;
+	const max = setting === "hue" ? HSL_HUE_MAX : HSL_PERCENT_MAX;
+	const steppedValue = Math.round(numericValue / HSL_SLIDER_STEP) * HSL_SLIDER_STEP;
+
+	return Math.min(max, Math.max(min, steppedValue));
+}
+
+function formatHslSliderValue(setting: HslSliderSetting, value: number): string {
+	const normalizedValue = normalizeHslSliderValue(setting, value);
+	return setting === "hue" ? `${normalizedValue}°` : `${normalizedValue}%`;
+}
+
+function getHslSliderAriaValue(setting: HslSliderSetting, value: number): string {
+	const valueText = formatHslSliderValue(setting, value);
+	return setting === "hue" ? `${valueText} hue` : `${getHslSliderLabel(setting)} ${valueText}`;
+}
+
+function getHslSliderLabel(setting: HslSliderSetting): string {
+	switch (setting) {
+		case "hue":
+			return "Hue";
+
+		case "saturation":
+			return "Saturation";
+
+		case "lightness":
+			return "Lightness";
+
+		default:
+			return "HSL";
+	}
+}
+
 function getColorWheelHueFromPointer(element: HTMLElement, clientX: number, clientY: number): number {
 	const rect = element.getBoundingClientRect();
 	const x = clientX - (rect.left + rect.width / 2);
@@ -5065,6 +5342,27 @@ function normalizeHsvColor(color: HsvColor): HsvColor {
 	};
 }
 
+function getColorWheelHsl(hexColor: string, fallbackHue = 0): HslColor {
+	const hsl = hexToHsl(hexColor);
+
+	if (!hsl) {
+		return {h: normalizeHue(fallbackHue), s: 0, l: 0};
+	}
+
+	return {
+		...hsl,
+		h: hsl.s === 0 ? normalizeHue(fallbackHue) : hsl.h,
+	};
+}
+
+function normalizeHslColor(color: HslColor): HslColor {
+	return {
+		h: normalizeHue(color.h),
+		s: clampUnit(color.s),
+		l: clampUnit(color.l),
+	};
+}
+
 function colorsMatch(a: string, b: string): boolean {
 	const aHex = normalizeHexColor(a);
 	const bHex = normalizeHexColor(b);
@@ -5108,6 +5406,24 @@ function isCopyShortcutEvent(event: KeyboardEvent): boolean {
 	return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c";
 }
 
+function getDrawingHistoryShortcutAction(event: KeyboardEvent): DrawingHistoryShortcutAction | null {
+	if (event.altKey || (!event.ctrlKey && !event.metaKey)) {
+		return null;
+	}
+
+	const key = event.key.toLowerCase();
+
+	if (key === "z") {
+		return event.shiftKey ? "redo" : "undo";
+	}
+
+	if (key === "y" && event.ctrlKey && !event.metaKey && !event.shiftKey) {
+		return "redo";
+	}
+
+	return null;
+}
+
 function getCustomColorShades(hexColor: string): Array<{name: string; value: string}> {
 	const baseColor = hexToRgb(hexColor) ?? hexToRgb(DEFAULT_CUSTOM_COLOR);
 
@@ -5144,6 +5460,11 @@ function hexToHsv(hexColor: string): HsvColor | null {
 	return rgbColor ? rgbToHsv(rgbColor) : null;
 }
 
+function hexToHsl(hexColor: string): HslColor | null {
+	const rgbColor = hexToRgb(hexColor);
+	return rgbColor ? rgbToHsl(rgbColor) : null;
+}
+
 function rgbToHsv(color: RgbColor): HsvColor {
 	const r = color.r / 255;
 	const g = color.g / 255;
@@ -5170,6 +5491,33 @@ function rgbToHsv(color: RgbColor): HsvColor {
 	};
 }
 
+function rgbToHsl(color: RgbColor): HslColor {
+	const r = color.r / 255;
+	const g = color.g / 255;
+	const b = color.b / 255;
+	const max = Math.max(r, g, b);
+	const min = Math.min(r, g, b);
+	const delta = max - min;
+	const lightness = (max + min) / 2;
+	let hue = 0;
+
+	if (delta > 0) {
+		if (max === r) {
+			hue = 60 * (((g - b) / delta) % 6);
+		} else if (max === g) {
+			hue = 60 * ((b - r) / delta + 2);
+		} else {
+			hue = 60 * ((r - g) / delta + 4);
+		}
+	}
+
+	return {
+		h: normalizeHue(hue),
+		s: delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1)),
+		l: lightness,
+	};
+}
+
 function hsvToHex(color: HsvColor): string {
 	return rgbToHex(hsvToRgb(color));
 }
@@ -5180,6 +5528,47 @@ function hsvToRgb(color: HsvColor): RgbColor {
 	const chroma = normalizedColor.v * normalizedColor.s;
 	const x = chroma * (1 - Math.abs(hue % 2 - 1));
 	const m = normalizedColor.v - chroma;
+	let r = 0;
+	let g = 0;
+	let b = 0;
+
+	if (hue < 1) {
+		r = chroma;
+		g = x;
+	} else if (hue < 2) {
+		r = x;
+		g = chroma;
+	} else if (hue < 3) {
+		g = chroma;
+		b = x;
+	} else if (hue < 4) {
+		g = x;
+		b = chroma;
+	} else if (hue < 5) {
+		r = x;
+		b = chroma;
+	} else {
+		r = chroma;
+		b = x;
+	}
+
+	return {
+		r: (r + m) * 255,
+		g: (g + m) * 255,
+		b: (b + m) * 255,
+	};
+}
+
+function hslToHex(color: HslColor): string {
+	return rgbToHex(hslToRgb(color));
+}
+
+function hslToRgb(color: HslColor): RgbColor {
+	const normalizedColor = normalizeHslColor(color);
+	const hue = normalizedColor.h / 60;
+	const chroma = (1 - Math.abs(2 * normalizedColor.l - 1)) * normalizedColor.s;
+	const x = chroma * (1 - Math.abs(hue % 2 - 1));
+	const m = normalizedColor.l - chroma / 2;
 	let r = 0;
 	let g = 0;
 	let b = 0;
