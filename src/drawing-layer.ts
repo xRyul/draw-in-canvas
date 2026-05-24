@@ -99,6 +99,29 @@ const HSL_SLIDER_SETTINGS = [
 	{id: "saturation", label: "Saturation", min: HSL_PERCENT_MIN, max: HSL_PERCENT_MAX, step: HSL_SLIDER_STEP, ariaLabel: "Stroke color HSL saturation"},
 	{id: "lightness", label: "Lightness", min: HSL_PERCENT_MIN, max: HSL_PERCENT_MAX, step: HSL_SLIDER_STEP, ariaLabel: "Stroke color HSL lightness"},
 ] as const;
+const RGB_CHANNEL_MIN = 0;
+const RGB_CHANNEL_MAX = 255;
+const RGB_CHANNEL_STEP = 1;
+const LAB_LIGHTNESS_MIN = 0;
+const LAB_LIGHTNESS_MAX = 100;
+const LAB_AB_MIN = -128;
+const LAB_AB_MAX = 127;
+const LAB_SLIDER_STEP = 1;
+const COLOR_VALUE_MODES = [
+	{id: "hsl", label: "HSL"},
+	{id: "rgb", label: "RGB"},
+	{id: "lab", label: "Lab"},
+] as const;
+const RGB_SLIDER_SETTINGS = [
+	{id: "red", label: "Red", min: RGB_CHANNEL_MIN, max: RGB_CHANNEL_MAX, step: RGB_CHANNEL_STEP, ariaLabel: "Stroke color red channel"},
+	{id: "green", label: "Green", min: RGB_CHANNEL_MIN, max: RGB_CHANNEL_MAX, step: RGB_CHANNEL_STEP, ariaLabel: "Stroke color green channel"},
+	{id: "blue", label: "Blue", min: RGB_CHANNEL_MIN, max: RGB_CHANNEL_MAX, step: RGB_CHANNEL_STEP, ariaLabel: "Stroke color blue channel"},
+] as const;
+const LAB_SLIDER_SETTINGS = [
+	{id: "labLightness", label: "Lightness", min: LAB_LIGHTNESS_MIN, max: LAB_LIGHTNESS_MAX, step: LAB_SLIDER_STEP, ariaLabel: "Stroke color Lab lightness"},
+	{id: "labA", label: "A", min: LAB_AB_MIN, max: LAB_AB_MAX, step: LAB_SLIDER_STEP, ariaLabel: "Stroke color Lab a axis"},
+	{id: "labB", label: "B", min: LAB_AB_MIN, max: LAB_AB_MAX, step: LAB_SLIDER_STEP, ariaLabel: "Stroke color Lab b axis"},
+] as const;
 const STALE_ELEMENT_SELECTOR = ".draw-in-canvas-control-group, .draw-in-canvas-render-layer, .draw-in-canvas-capture-layer, .draw-in-canvas-brush-controls, .draw-in-canvas-color-palette, .draw-in-canvas-stroke-settings-palette, .draw-in-canvas-brush-preview, .draw-in-canvas-stroke-width-preview, .draw-in-canvas-pen-cursor";
 const STALE_ELEMENT_CLASS = "draw-in-canvas-stale";
 const BRUSH_POPOVER_OPEN_BODY_CLASS = "draw-in-canvas-color-palette-open";
@@ -128,9 +151,32 @@ interface HslColor {
 	l: number;
 }
 
+interface LabColor {
+	l: number;
+	a: number;
+	b: number;
+}
+
+interface ColorValueSliderConfig {
+	readonly id: string;
+	readonly label: string;
+	readonly min: number;
+	readonly max: number;
+	readonly step: number;
+	readonly ariaLabel: string;
+}
+
+interface ParsedColorValue {
+	hexColor: string;
+	fallbackHue?: number;
+	hslColor?: HslColor;
+	labColor?: LabColor;
+}
+
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 type BrushSliderSetting = "size" | "opacity";
 type ColorPaletteTab = typeof COLOR_PALETTE_TABS[number]["id"];
+type ColorValueMode = typeof COLOR_VALUE_MODES[number]["id"];
 type ColorWheelControl = "hue" | "disc";
 type HslSliderConfig = typeof HSL_SLIDER_SETTINGS[number];
 type HslSliderSetting = HslSliderConfig["id"];
@@ -253,6 +299,11 @@ export class DrawingLayer {
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
 	private colorPaletteTab: ColorPaletteTab = "disc";
 	private colorWheelHsv = getColorWheelHsv(DEFAULT_CUSTOM_COLOR);
+	private colorValueMode: ColorValueMode = "hsl";
+	private colorValueHsl = getColorWheelHsl(DEFAULT_CUSTOM_COLOR);
+	private preserveHslColorValueForHex: string | null = null;
+	private colorValueLab = getColorValueLab(DEFAULT_CUSTOM_COLOR);
+	private preserveLabColorValueForHex: string | null = null;
 	private shouldSelectCustomColorHexOnClick = false;
 	private toolbarPressState: ToolbarPressState | null = null;
 	private brushPreviewEl: HTMLElement | null = null;
@@ -316,6 +367,8 @@ export class DrawingLayer {
 		this.settings = {...settings};
 		this.customColorHex = normalizeHexColor(settings.strokeColor) ?? DEFAULT_CUSTOM_COLOR;
 		this.colorWheelHsv = getColorWheelHsv(this.customColorHex, this.colorWheelHsv.h);
+		this.colorValueHsl = getColorWheelHsl(this.customColorHex, this.colorWheelHsv.h);
+		this.colorValueLab = getColorValueLab(this.customColorHex);
 		this.requestToggleDrawingMode = requestToggleDrawingMode;
 		this.requestSetStrokeColor = requestSetStrokeColor;
 		this.requestSetStrokeWidth = requestSetStrokeWidth;
@@ -1307,33 +1360,146 @@ export class DrawingLayer {
 	}
 
 	private syncHslSliderControls(): void {
-		const sliderEls = this.colorPaletteEl?.querySelectorAll<HTMLInputElement>("[data-color-hsl-slider]") ?? [];
+		this.syncColorValueModeControls();
 
-		if (sliderEls.length === 0) {
-			return;
+		const sliderEls = this.colorPaletteEl?.querySelectorAll<HTMLInputElement>(".draw-in-canvas-hsl-slider") ?? [];
+		const inputText = this.getColorValueInputText();
+		const hslInputEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-hsl-value-input");
+
+		if (hslInputEl && (document.activeElement !== hslInputEl || hslInputEl.readOnly)) {
+			hslInputEl.value = inputText;
+			setHslInputValidity(hslInputEl, true);
 		}
 
-		const hslColor = getColorWheelHsl(this.customColorHex, this.colorWheelHsv.h);
-
 		for (const sliderEl of Array.from(sliderEls)) {
-			const setting = getHslSliderSetting(sliderEl.dataset.colorHslSlider);
+			const setting = getColorValueSliderConfig(this.colorValueMode, sliderEl.dataset.colorValueSlider);
 
 			if (!setting) {
 				continue;
 			}
 
-			const value = getHslSliderValue(setting, hslColor);
-			const valueText = formatHslSliderValue(setting, value);
-			const valueEl = this.colorPaletteEl?.querySelector<HTMLElement>(`[data-color-hsl-value="${setting}"]`);
+			const value = this.getColorValueSliderValue(setting.id);
+			const valueText = formatColorValueSliderValue(this.colorValueMode, setting.id, value);
+			const valueEl = sliderEl.closest<HTMLElement>(".draw-in-canvas-hsl-slider-control")?.querySelector<HTMLElement>("output");
 
 			sliderEl.value = value.toString();
 			sliderEl.setAttribute("aria-valuenow", value.toString());
-			sliderEl.setAttribute("aria-valuetext", getHslSliderAriaValue(setting, value));
+			sliderEl.setAttribute("aria-valuetext", getColorValueSliderAriaValue(this.colorValueMode, setting.id, value));
+			sliderEl.setCssProps(this.getColorValueSliderCssProps(setting.id));
 
 			if (valueEl) {
 				valueEl.textContent = valueText;
 			}
 		}
+	}
+
+	private syncColorValueModeControls(): void {
+		const modeConfig = getColorValueModeConfig(this.colorValueMode);
+		const modeButtonEls = this.colorPaletteEl?.querySelectorAll<HTMLButtonElement>("[data-color-value-mode]") ?? [];
+		const inputEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-hsl-value-input");
+		const sliderEls = this.colorPaletteEl?.querySelectorAll<HTMLInputElement>(".draw-in-canvas-hsl-slider") ?? [];
+		const sliderSettings = getColorValueSliderConfigs(this.colorValueMode);
+
+		for (const buttonEl of Array.from(modeButtonEls)) {
+			const isActive = buttonEl.dataset.colorValueMode === this.colorValueMode;
+			buttonEl.classList.toggle("is-active", isActive);
+			buttonEl.setAttribute("aria-pressed", isActive.toString());
+		}
+
+		if (inputEl) {
+			inputEl.placeholder = modeConfig.placeholder;
+			inputEl.maxLength = modeConfig.maxLength;
+			inputEl.setAttribute("aria-label", modeConfig.ariaLabel);
+		}
+
+		for (const [index, sliderEl] of Array.from(sliderEls).entries()) {
+			const setting = sliderSettings[index];
+
+			if (!setting) {
+				continue;
+			}
+
+			sliderEl.min = setting.min.toString();
+			sliderEl.max = setting.max.toString();
+			sliderEl.step = setting.step.toString();
+			sliderEl.dataset.colorValueSlider = setting.id;
+			sliderEl.setAttribute("aria-label", setting.ariaLabel);
+
+			const controlEl = sliderEl.closest<HTMLElement>(".draw-in-canvas-hsl-slider-control");
+			const labelEl = controlEl?.querySelector<HTMLLabelElement>("label");
+			const valueEl = controlEl?.querySelector<HTMLElement>("output");
+
+			if (labelEl) {
+				labelEl.textContent = setting.label;
+			}
+
+			if (valueEl) {
+				valueEl.setAttribute("data-color-value-value", setting.id);
+			}
+		}
+	}
+
+	private getColorValueInputText(): string {
+		switch (this.colorValueMode) {
+			case "hsl":
+				return formatHslColor(this.colorValueHsl);
+
+			case "lab":
+				return formatLabColor(this.colorValueLab);
+
+			default:
+				return formatColorValueInput(this.colorValueMode, this.customColorHex, this.colorWheelHsv.h);
+		}
+	}
+
+	private getColorValueSliderValue(setting: string): number {
+		switch (this.colorValueMode) {
+			case "hsl": {
+				const hslSetting = getHslSliderSetting(setting);
+				return hslSetting ? getHslSliderValue(hslSetting, this.colorValueHsl) : HSL_PERCENT_MIN;
+			}
+
+			case "lab":
+				return getLabSliderValue(setting, this.colorValueLab);
+
+			default:
+				return getColorValueSliderValue(this.colorValueMode, setting, this.customColorHex, this.colorWheelHsv.h);
+		}
+	}
+
+	private getColorValueSliderCssProps(setting: string): Record<string, string> {
+		switch (this.colorValueMode) {
+			case "hsl":
+				return getHslSliderCssProps(setting, this.colorValueHsl);
+
+			case "lab":
+				return getLabSliderCssProps(setting, this.colorValueLab);
+
+			default:
+				return getColorValueSliderCssProps(this.colorValueMode, setting, this.customColorHex, this.colorWheelHsv.h);
+		}
+	}
+
+	private syncColorValueHslFromHex(hexColor: string, fallbackHue = this.colorWheelHsv.h): void {
+		const normalizedHexColor = normalizeHexColor(hexColor);
+
+		if (!normalizedHexColor || normalizedHexColor === this.preserveHslColorValueForHex) {
+			return;
+		}
+
+		this.colorValueHsl = getColorWheelHsl(normalizedHexColor, fallbackHue);
+		this.preserveHslColorValueForHex = null;
+	}
+
+	private syncColorValueLabFromHex(hexColor: string): void {
+		const normalizedHexColor = normalizeHexColor(hexColor);
+
+		if (!normalizedHexColor || normalizedHexColor === this.preserveLabColorValueForHex) {
+			return;
+		}
+
+		this.colorValueLab = getColorValueLab(normalizedHexColor);
+		this.preserveLabColorValueForHex = null;
 	}
 
 	private syncColorPaletteHeader(): void {
@@ -1392,6 +1558,8 @@ export class DrawingLayer {
 		if (strokeColorHex) {
 			this.customColorHex = strokeColorHex;
 			this.colorWheelHsv = getColorWheelHsv(strokeColorHex, this.colorWheelHsv.h);
+			this.syncColorValueHslFromHex(strokeColorHex, this.colorWheelHsv.h);
+			this.syncColorValueLabFromHex(strokeColorHex);
 		}
 	}
 
@@ -1401,6 +1569,8 @@ export class DrawingLayer {
 
 		this.colorWheelHsv = nextColor;
 		this.customColorHex = hexColor;
+		this.syncColorValueHslFromHex(hexColor, nextColor.h);
+		this.syncColorValueLabFromHex(hexColor);
 		this.setStrokeColor(hexColor);
 		this.syncColorWheelControls();
 		this.syncHslSliderControls();
@@ -1409,19 +1579,71 @@ export class DrawingLayer {
 
 	private setHslColor(color: HslColor): void {
 		const nextColor = normalizeHslColor(color);
-		const hexColor = hslToHex(nextColor);
+		this.setColorValueHex(hslToHex(nextColor), nextColor.h, undefined, nextColor);
+	}
 
-		this.colorWheelHsv = getColorWheelHsv(hexColor, nextColor.h);
-		this.customColorHex = hexColor;
-		this.setStrokeColor(hexColor);
+	private setColorValueSliderValue(setting: string, value: number): void {
+		if (this.colorValueMode === "hsl") {
+			const hslSetting = getHslSliderSetting(setting);
+
+			if (!hslSetting) {
+				return;
+			}
+
+			const nextHslColor = getHslColorWithSliderValue(this.colorValueHsl, hslSetting, value);
+			this.setColorValueHex(hslToHex(nextHslColor), nextHslColor.h, undefined, nextHslColor);
+			return;
+		}
+
+		if (this.colorValueMode === "lab") {
+			const nextLabColor = getLabColorWithSliderValue(this.colorValueLab, setting, value);
+
+			if (!nextLabColor) {
+				return;
+			}
+
+			this.setColorValueHex(labToHex(nextLabColor), this.colorWheelHsv.h, nextLabColor);
+			return;
+		}
+
+		const nextColor = getColorValueWithSliderValue(this.colorValueMode, setting, value, this.customColorHex, this.colorWheelHsv.h);
+
+		if (!nextColor) {
+			return;
+		}
+
+		this.setColorValueHex(nextColor.hexColor, nextColor.fallbackHue, nextColor.labColor, nextColor.hslColor);
+	}
+
+	private setColorValueHex(hexColor: string, fallbackHue = this.colorWheelHsv.h, sourceLabColor?: LabColor, sourceHslColor?: HslColor): void {
+		const normalizedHexColor = normalizeHexColor(hexColor);
+
+		if (!normalizedHexColor) {
+			return;
+		}
+
+		if (sourceHslColor) {
+			this.colorValueHsl = normalizeHslColor(sourceHslColor);
+			this.preserveHslColorValueForHex = normalizedHexColor;
+		} else {
+			this.preserveHslColorValueForHex = null;
+			this.syncColorValueHslFromHex(normalizedHexColor, fallbackHue);
+		}
+
+		if (sourceLabColor) {
+			this.colorValueLab = normalizeLabColor(sourceLabColor);
+			this.preserveLabColorValueForHex = normalizedHexColor;
+		} else {
+			this.preserveLabColorValueForHex = null;
+			this.syncColorValueLabFromHex(normalizedHexColor);
+		}
+
+		this.colorWheelHsv = getColorWheelHsv(normalizedHexColor, fallbackHue);
+		this.customColorHex = normalizedHexColor;
+		this.setStrokeColor(normalizedHexColor);
 		this.syncColorWheelControls();
 		this.syncHslSliderControls();
 		this.syncColorPaletteHeader();
-	}
-
-	private setHslSliderValue(setting: HslSliderSetting, value: number): void {
-		const currentColor = getColorWheelHsl(this.customColorHex, this.colorWheelHsv.h);
-		this.setHslColor(getHslColorWithSliderValue(currentColor, setting, value));
 	}
 
 	private setStrokeColor(color: string): void {
@@ -1430,6 +1652,8 @@ export class DrawingLayer {
 		if (hexColor) {
 			this.customColorHex = hexColor;
 			this.colorWheelHsv = getColorWheelHsv(hexColor, this.colorWheelHsv.h);
+			this.syncColorValueHslFromHex(hexColor, this.colorWheelHsv.h);
+			this.syncColorValueLabFromHex(hexColor);
 		}
 
 		if (colorsMatch(color, this.settings.strokeColor)) {
@@ -1543,10 +1767,10 @@ export class DrawingLayer {
 		wheelEl.append(hueControlEl, discControlEl);
 		panelEl.append(
 			wheelEl,
+			this.createCustomColorShadesEl("Selected color shades"),
 			this.createHslSliderControlsEl(),
 			this.createColorHistorySectionEl(),
 			this.createColorDiscPaletteEl(),
-			this.createCustomColorShadesEl("Selected color shades"),
 		);
 		return panelEl;
 	}
@@ -1555,26 +1779,73 @@ export class DrawingLayer {
 		const controlEl = document.createElement("div");
 		controlEl.classList.add("draw-in-canvas-color-disc-palette", "draw-in-canvas-hsl-controls");
 
-		const titleEl = document.createElement("div");
-		titleEl.classList.add("draw-in-canvas-color-disc-palette-title");
-		titleEl.textContent = "HSL";
+		const modeConfig = getColorValueModeConfig(this.colorValueMode);
+
+		const headerEl = document.createElement("div");
+		headerEl.classList.add("draw-in-canvas-hsl-header");
+
+		const modeGroupEl = document.createElement("div");
+		modeGroupEl.classList.add("draw-in-canvas-color-mode-segmented");
+		modeGroupEl.setAttribute("role", "group");
+		modeGroupEl.setAttribute("aria-label", "Color model");
+
+		for (const mode of COLOR_VALUE_MODES) {
+			const buttonEl = document.createElement("button");
+			const isActive = mode.id === this.colorValueMode;
+			buttonEl.classList.add("draw-in-canvas-color-mode-button");
+			buttonEl.type = "button";
+			buttonEl.dataset.colorValueMode = mode.id;
+			buttonEl.textContent = mode.label;
+			buttonEl.title = `Show ${mode.label} color controls`;
+			buttonEl.setAttribute("aria-pressed", isActive.toString());
+			buttonEl.classList.toggle("is-active", isActive);
+			modeGroupEl.appendChild(buttonEl);
+
+			this.colorPaletteDisposers.push(
+				this.addListener(buttonEl, "click", this.handleColorValueModeClick),
+			);
+		}
+
+		const inputEl = document.createElement("input");
+		inputEl.classList.add("draw-in-canvas-hsl-value-input");
+		inputEl.type = "text";
+		inputEl.inputMode = "text";
+		inputEl.maxLength = modeConfig.maxLength;
+		inputEl.placeholder = modeConfig.placeholder;
+		inputEl.spellcheck = false;
+		inputEl.readOnly = true;
+		inputEl.value = this.getColorValueInputText();
+		inputEl.title = "Click to copy; double-click to edit.";
+		inputEl.setAttribute("aria-label", modeConfig.ariaLabel);
+		setHslInputValidity(inputEl, true);
+
+		this.colorPaletteDisposers.push(
+			this.addListener(inputEl, "pointerdown", this.handleCurrentColorHslPointerDown),
+			this.addListener(inputEl, "click", this.handleCurrentColorHslClick),
+			this.addListener(inputEl, "dblclick", this.handleCurrentColorHslDoubleClick),
+			this.addListener(inputEl, "focus", this.handleCurrentColorHslFocus),
+			this.addListener(inputEl, "input", this.handleCurrentColorHslInput),
+			this.addListener(inputEl, "change", this.handleCurrentColorHslChange),
+			this.addListener(inputEl, "blur", this.handleCurrentColorHslChange),
+			this.addListener(inputEl, "keydown", this.handleCurrentColorHslKeyDown),
+		);
+
+		headerEl.append(modeGroupEl, inputEl);
 
 		const slidersEl = document.createElement("div");
 		slidersEl.classList.add("draw-in-canvas-hsl-slider-list");
 
-		const hslColor = getColorWheelHsl(this.customColorHex, this.colorWheelHsv.h);
-
-		for (const setting of HSL_SLIDER_SETTINGS) {
-			slidersEl.appendChild(this.createHslSliderControlEl(setting, hslColor));
+		for (const setting of getColorValueSliderConfigs(this.colorValueMode)) {
+			slidersEl.appendChild(this.createHslSliderControlEl(setting));
 		}
 
-		controlEl.append(titleEl, slidersEl);
+		controlEl.append(headerEl, slidersEl);
 		return controlEl;
 	}
 
-	private createHslSliderControlEl(setting: HslSliderConfig, color: HslColor): HTMLElement {
+	private createHslSliderControlEl(setting: ColorValueSliderConfig): HTMLElement {
 		const inputId = createStrokeId();
-		const value = getHslSliderValue(setting.id, color);
+		const value = this.getColorValueSliderValue(setting.id);
 		const sliderEl = document.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-hsl-slider");
@@ -1583,9 +1854,10 @@ export class DrawingLayer {
 		sliderEl.max = setting.max.toString();
 		sliderEl.step = setting.step.toString();
 		sliderEl.value = value.toString();
-		sliderEl.dataset.colorHslSlider = setting.id;
+		sliderEl.dataset.colorValueSlider = setting.id;
 		sliderEl.setAttribute("aria-label", setting.ariaLabel);
-		sliderEl.setAttribute("aria-valuetext", getHslSliderAriaValue(setting.id, value));
+		sliderEl.setAttribute("aria-valuetext", getColorValueSliderAriaValue(this.colorValueMode, setting.id, value));
+		sliderEl.setCssProps(this.getColorValueSliderCssProps(setting.id));
 
 		this.colorPaletteDisposers.push(
 			this.addListener(sliderEl, "pointerdown", this.handleHslSliderPointerDown),
@@ -1598,14 +1870,14 @@ export class DrawingLayer {
 			inputId,
 			setting.label,
 			"draw-in-canvas-stroke-width-value",
-			formatHslSliderValue(setting.id, value),
+			formatColorValueSliderValue(this.colorValueMode, setting.id, value),
 			sliderEl,
 		);
 		const valueEl = controlEl.querySelector("output");
 
 		controlEl.classList.add("draw-in-canvas-hsl-slider-control");
 		valueEl?.classList.add("draw-in-canvas-hsl-slider-value");
-		valueEl?.setAttribute("data-color-hsl-value", setting.id);
+		valueEl?.setAttribute("data-color-value-value", setting.id);
 		return controlEl;
 	}
 
@@ -3034,6 +3306,42 @@ export class DrawingLayer {
 			?.focus({preventScroll: true});
 	};
 
+	private readonly handleColorValueModeClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLElement)) {
+			return;
+		}
+
+		const mode = getColorValueMode(event.currentTarget.dataset.colorValueMode);
+
+		if (!mode) {
+			return;
+		}
+
+		this.setColorValueMode(mode);
+	};
+
+	private setColorValueMode(mode: ColorValueMode): void {
+		if (mode === this.colorValueMode) {
+			return;
+		}
+
+		this.colorValueMode = mode;
+
+		if (mode === "hsl") {
+			this.colorValueHsl = getColorWheelHsl(this.customColorHex, this.colorWheelHsv.h);
+			this.preserveHslColorValueForHex = null;
+		} else if (mode === "lab") {
+			this.colorValueLab = getColorValueLab(this.customColorHex);
+			this.preserveLabColorValueForHex = null;
+		}
+
+		this.syncHslSliderControls();
+		this.positionColorPalette();
+	}
+
 	private readonly handleColorWheelPointerDown = (event: PointerEvent): void => {
 		if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) {
 			return;
@@ -3135,14 +3443,176 @@ export class DrawingLayer {
 	};
 
 	private updateHslSliderFromInput(inputEl: HTMLInputElement): boolean {
-		const setting = getHslSliderSetting(inputEl.dataset.colorHslSlider);
+		const setting = getColorValueSliderConfig(this.colorValueMode, inputEl.dataset.colorValueSlider);
 
 		if (!setting) {
 			return false;
 		}
 
-		this.setHslSliderValue(setting, Number(inputEl.value));
+		this.setColorValueSliderValue(setting.id, Number(inputEl.value));
 		return true;
+	}
+
+	private readonly handleCurrentColorHslPointerDown = (event: PointerEvent): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement) || !event.currentTarget.readOnly) {
+			return;
+		}
+
+		event.preventDefault();
+		event.currentTarget.focus({preventScroll: true});
+	};
+
+	private readonly handleCurrentColorHslClick = (event: MouseEvent): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement) || !event.currentTarget.readOnly) {
+			return;
+		}
+
+		event.preventDefault();
+
+		if (event.detail >= 2) {
+			this.beginCurrentColorHslEdit(event.currentTarget);
+			return;
+		}
+
+		void this.copyCurrentColorHslToClipboard(event.currentTarget);
+	};
+
+	private readonly handleCurrentColorHslDoubleClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		if (event.currentTarget instanceof HTMLInputElement) {
+			this.beginCurrentColorHslEdit(event.currentTarget);
+		}
+	};
+
+	private readonly handleCurrentColorHslFocus = (event: FocusEvent): void => {
+		if (!(event.currentTarget instanceof HTMLInputElement) || event.currentTarget.readOnly) {
+			return;
+		}
+
+		const inputEl = event.currentTarget;
+
+		window.requestAnimationFrame(() => {
+			if (document.activeElement === inputEl && !inputEl.readOnly) {
+				inputEl.select();
+			}
+		});
+	};
+
+	private readonly handleCurrentColorHslInput = (event: Event): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement) || event.currentTarget.readOnly) {
+			return;
+		}
+
+		const parsedColor = parseColorValueInput(this.colorValueMode, event.currentTarget.value);
+		const isEmpty = event.currentTarget.value.trim().length === 0;
+		setHslInputValidity(event.currentTarget, Boolean(parsedColor) || isEmpty);
+
+		if (!parsedColor) {
+			return;
+		}
+
+		this.setColorValueHex(parsedColor.hexColor, parsedColor.fallbackHue, parsedColor.labColor, parsedColor.hslColor);
+	};
+
+	private readonly handleCurrentColorHslChange = (event: Event): void => {
+		event.stopPropagation();
+
+		if (event.currentTarget instanceof HTMLInputElement) {
+			this.commitCurrentColorHslEdit(event.currentTarget);
+		}
+	};
+
+	private readonly handleCurrentColorHslKeyDown = (event: KeyboardEvent): void => {
+		event.stopPropagation();
+
+		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		if (event.currentTarget.readOnly) {
+			if (event.key === "Enter" || event.key === "F2") {
+				event.preventDefault();
+				this.beginCurrentColorHslEdit(event.currentTarget);
+				return;
+			}
+
+			if (event.key === " " || isCopyShortcutEvent(event)) {
+				event.preventDefault();
+				void this.copyCurrentColorHslToClipboard(event.currentTarget);
+			}
+
+			return;
+		}
+
+		if (event.key === "Enter") {
+			event.preventDefault();
+			event.currentTarget.blur();
+			return;
+		}
+
+		if (event.key === "Escape") {
+			event.preventDefault();
+			this.resetCurrentColorHslInput(event.currentTarget);
+			event.currentTarget.blur();
+		}
+	};
+
+	private beginCurrentColorHslEdit(inputEl: HTMLInputElement): void {
+		inputEl.readOnly = false;
+		inputEl.classList.add("is-editing");
+		inputEl.value = this.getColorValueInputText();
+		setHslInputValidity(inputEl, true);
+		inputEl.focus({preventScroll: true});
+
+		window.requestAnimationFrame(() => {
+			if (document.activeElement === inputEl && !inputEl.readOnly) {
+				inputEl.select();
+			}
+		});
+	}
+
+	private commitCurrentColorHslEdit(inputEl: HTMLInputElement): void {
+		const wasEditing = !inputEl.readOnly;
+		const parsedColor = parseColorValueInput(this.colorValueMode, inputEl.value);
+
+		if (parsedColor && wasEditing) {
+			this.setColorValueHex(parsedColor.hexColor, parsedColor.fallbackHue, parsedColor.labColor, parsedColor.hslColor);
+			this.recordColorHistory(this.customColorHex);
+		}
+
+		inputEl.readOnly = true;
+		inputEl.classList.remove("is-editing");
+		inputEl.value = this.getColorValueInputText();
+		setHslInputValidity(inputEl, true);
+	}
+
+	private resetCurrentColorHslInput(inputEl: HTMLInputElement): void {
+		inputEl.readOnly = true;
+		inputEl.classList.remove("is-editing");
+		inputEl.value = this.getColorValueInputText();
+		setHslInputValidity(inputEl, true);
+	}
+
+	private async copyCurrentColorHslToClipboard(inputEl: HTMLInputElement): Promise<void> {
+		const color = this.getColorValueInputText();
+		inputEl.value = color;
+		setHslInputValidity(inputEl, true);
+
+		try {
+			await copyTextToClipboard(color);
+			new Notice(`Copied ${color}`);
+		} catch (error) {
+			console.error("Draw in canvas could not copy color value", error);
+			new Notice("Draw in canvas could not copy color value. See console for details.");
+		}
 	}
 
 	private readonly handleCurrentColorHexPointerDown = (event: PointerEvent): void => {
@@ -5116,6 +5586,332 @@ function getColorWheelControl(value: string | undefined): ColorWheelControl | nu
 	return value === "hue" || value === "disc" ? value : null;
 }
 
+function getColorValueMode(value: string | undefined): ColorValueMode | null {
+	return COLOR_VALUE_MODES.some((mode) => mode.id === value) ? value as ColorValueMode : null;
+}
+
+function getColorValueModeConfig(mode: ColorValueMode): {placeholder: string; ariaLabel: string; maxLength: number} {
+	switch (mode) {
+		case "hsl":
+			return {placeholder: "0, 0%, 0%", ariaLabel: "Current hsl stroke color. Click to copy; double-click or press enter to edit.", maxLength: 32};
+
+		case "rgb":
+			return {placeholder: "0, 0, 0", ariaLabel: "Current rgb stroke color. Click to copy; double-click or press enter to edit.", maxLength: 32};
+
+		case "lab":
+			return {placeholder: "50% 0 0", ariaLabel: "Current Lab stroke color. Click to copy; double-click or press enter to edit.", maxLength: 36};
+
+		default:
+			return {placeholder: "", ariaLabel: "Current stroke color value. Click to copy; double-click or press enter to edit.", maxLength: 36};
+	}
+}
+
+function getColorValueSliderConfigs(mode: ColorValueMode): readonly ColorValueSliderConfig[] {
+	switch (mode) {
+		case "hsl":
+			return HSL_SLIDER_SETTINGS;
+
+		case "rgb":
+			return RGB_SLIDER_SETTINGS;
+
+		case "lab":
+			return LAB_SLIDER_SETTINGS;
+
+		default:
+			return HSL_SLIDER_SETTINGS;
+	}
+}
+
+function getColorValueSliderConfig(mode: ColorValueMode, value: string | undefined): ColorValueSliderConfig | null {
+	return getColorValueSliderConfigs(mode).find((slider) => slider.id === value) ?? null;
+}
+
+function getColorValueSliderValue(mode: ColorValueMode, setting: string, hexColor: string, fallbackHue = 0): number {
+	switch (mode) {
+		case "hsl": {
+			const hslSetting = getHslSliderSetting(setting);
+			return hslSetting ? getHslSliderValue(hslSetting, getColorWheelHsl(hexColor, fallbackHue)) : HSL_PERCENT_MIN;
+		}
+
+		case "rgb": {
+			const color = getColorValueRgb(hexColor);
+
+			switch (setting) {
+				case "red":
+					return normalizeRgbChannel(color.r);
+
+				case "green":
+					return normalizeRgbChannel(color.g);
+
+				case "blue":
+					return normalizeRgbChannel(color.b);
+
+				default:
+					return RGB_CHANNEL_MIN;
+			}
+		}
+
+		case "lab": {
+			const color = getColorValueLab(hexColor);
+
+			switch (setting) {
+				case "labLightness":
+					return normalizeLabLightness(color.l);
+
+				case "labA":
+					return normalizeLabAxis(color.a);
+
+				case "labB":
+					return normalizeLabAxis(color.b);
+
+				default:
+					return LAB_LIGHTNESS_MIN;
+			}
+		}
+
+		default:
+			return HSL_PERCENT_MIN;
+	}
+}
+
+function getColorValueWithSliderValue(mode: ColorValueMode, setting: string, value: number, hexColor: string, fallbackHue = 0): ParsedColorValue | null {
+	switch (mode) {
+		case "hsl": {
+			const hslSetting = getHslSliderSetting(setting);
+
+			if (!hslSetting) {
+				return null;
+			}
+
+			const color = getHslColorWithSliderValue(getColorWheelHsl(hexColor, fallbackHue), hslSetting, value);
+			return {hexColor: hslToHex(color), fallbackHue: color.h, hslColor: color};
+		}
+
+		case "rgb": {
+			const color = getColorValueRgb(hexColor);
+
+			switch (setting) {
+				case "red":
+					return {hexColor: rgbToHex({...color, r: normalizeRgbChannel(value)})};
+
+				case "green":
+					return {hexColor: rgbToHex({...color, g: normalizeRgbChannel(value)})};
+
+				case "blue":
+					return {hexColor: rgbToHex({...color, b: normalizeRgbChannel(value)})};
+
+				default:
+					return null;
+			}
+		}
+
+		case "lab": {
+			const color = getLabColorWithSliderValue(getColorValueLab(hexColor), setting, value);
+
+			return color ? {hexColor: labToHex(color), labColor: color} : null;
+		}
+
+		default:
+			return null;
+	}
+}
+
+function getColorValueSliderCssProps(mode: ColorValueMode, setting: string, hexColor: string, fallbackHue = 0): Record<string, string> {
+	return {
+		"--draw-in-canvas-hsl-slider-gradient": getColorValueSliderGradient(mode, setting, hexColor, fallbackHue),
+		"--draw-in-canvas-hsl-slider-thumb-color": normalizeHexColor(hexColor) ?? DEFAULT_CUSTOM_COLOR,
+	};
+}
+
+function getHslSliderCssProps(setting: string, color: HslColor): Record<string, string> {
+	const hslSetting = getHslSliderSetting(setting);
+
+	return {
+		"--draw-in-canvas-hsl-slider-gradient": hslSetting ? getHslSliderGradient(hslSetting, color) : "var(--background-modifier-border)",
+		"--draw-in-canvas-hsl-slider-thumb-color": formatHslColor(color),
+	};
+}
+
+function getLabSliderCssProps(setting: string, color: LabColor): Record<string, string> {
+	return {
+		"--draw-in-canvas-hsl-slider-gradient": getLabSliderGradient(setting, color),
+		"--draw-in-canvas-hsl-slider-thumb-color": labToHex(color),
+	};
+}
+
+function getColorValueSliderGradient(mode: ColorValueMode, setting: string, hexColor: string, fallbackHue = 0): string {
+	switch (mode) {
+		case "hsl": {
+			const hslSetting = getHslSliderSetting(setting);
+			return hslSetting ? getHslSliderGradient(hslSetting, getColorWheelHsl(hexColor, fallbackHue)) : "var(--background-modifier-border)";
+		}
+
+		case "rgb":
+			return getRgbSliderGradient(setting, getColorValueRgb(hexColor));
+
+		case "lab":
+			return getLabSliderGradient(setting, getColorValueLab(hexColor));
+
+		default:
+			return "var(--background-modifier-border)";
+	}
+}
+
+function getRgbSliderGradient(setting: string, color: RgbColor): string {
+	const red = normalizeRgbChannel(color.r);
+	const green = normalizeRgbChannel(color.g);
+	const blue = normalizeRgbChannel(color.b);
+
+	switch (setting) {
+		case "red":
+			return `linear-gradient(to right, rgb(0, ${green}, ${blue}), rgb(255, ${green}, ${blue}))`;
+
+		case "green":
+			return `linear-gradient(to right, rgb(${red}, 0, ${blue}), rgb(${red}, 255, ${blue}))`;
+
+		case "blue":
+			return `linear-gradient(to right, rgb(${red}, ${green}, 0), rgb(${red}, ${green}, 255))`;
+
+		default:
+			return "var(--background-modifier-border)";
+	}
+}
+
+function getLabSliderGradient(setting: string, color: LabColor): string {
+	switch (setting) {
+		case "labLightness":
+			return createColorValueGradient(LAB_LIGHTNESS_MIN, LAB_LIGHTNESS_MAX, (value) => labToHex({...color, l: value}));
+
+		case "labA":
+			return createColorValueGradient(LAB_AB_MIN, LAB_AB_MAX, (value) => labToHex({...color, a: value}));
+
+		case "labB":
+			return createColorValueGradient(LAB_AB_MIN, LAB_AB_MAX, (value) => labToHex({...color, b: value}));
+
+		default:
+			return "var(--background-modifier-border)";
+	}
+}
+
+function createColorValueGradient(min: number, max: number, getColor: (value: number) => string): string {
+	const stopCount = 6;
+	const stops: string[] = [];
+
+	for (let index = 0; index <= stopCount; index++) {
+		const value = min + (max - min) * (index / stopCount);
+		stops.push(getColor(value));
+	}
+
+	return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+function formatColorValueInput(mode: ColorValueMode, hexColor: string, fallbackHue = 0): string {
+	switch (mode) {
+		case "hsl":
+			return formatHslColor(getColorWheelHsl(hexColor, fallbackHue));
+
+		case "rgb":
+			return formatRgbColor(getColorValueRgb(hexColor));
+
+		case "lab":
+			return formatLabColor(getColorValueLab(hexColor));
+
+		default:
+			return formatHexColor(hexColor);
+	}
+}
+
+function parseColorValueInput(mode: ColorValueMode, value: string): ParsedColorValue | null {
+	switch (mode) {
+		case "hsl": {
+			const color = parseHslColor(value);
+			return color ? {hexColor: hslToHex(color), fallbackHue: color.h, hslColor: color} : null;
+		}
+
+		case "rgb": {
+			const color = parseRgbColor(value);
+			return color ? {hexColor: rgbToHex(color)} : null;
+		}
+
+		case "lab": {
+			const color = parseLabColor(value);
+			return color ? {hexColor: labToHex(color), labColor: color} : null;
+		}
+
+		default:
+			return null;
+	}
+}
+
+function formatColorValueSliderValue(mode: ColorValueMode, setting: string, value: number): string {
+	switch (mode) {
+		case "hsl": {
+			const hslSetting = getHslSliderSetting(setting);
+			return hslSetting ? formatHslSliderValue(hslSetting, value) : Math.round(value).toString();
+		}
+
+		case "rgb":
+			return normalizeRgbChannel(value).toString();
+
+		case "lab":
+			return setting === "labLightness" ? `${normalizeLabLightness(value)}%` : normalizeLabAxis(value).toString();
+
+		default:
+			return Math.round(value).toString();
+	}
+}
+
+function getColorValueSliderAriaValue(mode: ColorValueMode, setting: string, value: number): string {
+	return `${getColorValueSliderLabel(mode, setting)} ${formatColorValueSliderValue(mode, setting, value)}`;
+}
+
+function getColorValueSliderLabel(mode: ColorValueMode, setting: string): string {
+	const slider = getColorValueSliderConfig(mode, setting);
+	return slider?.label ?? "Color";
+}
+
+function getColorValueRgb(hexColor: string): RgbColor {
+	return hexToRgb(hexColor) ?? hexToRgb(DEFAULT_CUSTOM_COLOR) ?? {r: 0, g: 0, b: 0};
+}
+
+function getColorValueLab(hexColor: string): LabColor {
+	return hexToLab(hexColor) ?? hexToLab(DEFAULT_CUSTOM_COLOR) ?? {l: 0, a: 0, b: 0};
+}
+
+function getLabSliderValue(setting: string, color: LabColor): number {
+	switch (setting) {
+		case "labLightness":
+			return normalizeLabLightness(color.l);
+
+		case "labA":
+			return normalizeLabAxis(color.a);
+
+		case "labB":
+			return normalizeLabAxis(color.b);
+
+		default:
+			return LAB_LIGHTNESS_MIN;
+	}
+}
+
+function getLabColorWithSliderValue(color: LabColor, setting: string, value: number): LabColor | null {
+	const normalizedColor = normalizeLabColor(color);
+
+	switch (setting) {
+		case "labLightness":
+			return {...normalizedColor, l: normalizeLabLightness(value)};
+
+		case "labA":
+			return {...normalizedColor, a: normalizeLabAxis(value)};
+
+		case "labB":
+			return {...normalizedColor, b: normalizeLabAxis(value)};
+
+		default:
+			return null;
+	}
+}
+
 function getHslSliderSetting(value: string | undefined): HslSliderSetting | null {
 	return HSL_SLIDER_SETTINGS.some((slider) => slider.id === value) ? value as HslSliderSetting : null;
 }
@@ -5165,30 +5961,29 @@ function normalizeHslSliderValue(setting: HslSliderSetting, value: number): numb
 	return Math.min(max, Math.max(min, steppedValue));
 }
 
+function getHslSliderGradient(setting: HslSliderSetting, color: HslColor): string {
+	const hue = getHslSliderValue("hue", color);
+	const saturation = getHslSliderValue("saturation", color);
+	const lightness = getHslSliderValue("lightness", color);
+
+	switch (setting) {
+		case "hue":
+			return "linear-gradient(to right, hsl(0, 100%, 50%), hsl(60, 100%, 50%), hsl(120, 100%, 50%), hsl(180, 100%, 50%), hsl(240, 100%, 50%), hsl(300, 100%, 50%), hsl(360, 100%, 50%))";
+
+		case "saturation":
+			return `linear-gradient(to right, hsl(${hue}, 0%, ${lightness}%), hsl(${hue}, 100%, ${lightness}%))`;
+
+		case "lightness":
+			return `linear-gradient(to right, hsl(${hue}, ${saturation}%, 0%), hsl(${hue}, ${saturation}%, 50%), hsl(${hue}, ${saturation}%, 100%))`;
+
+		default:
+			return "var(--background-modifier-border)";
+	}
+}
+
 function formatHslSliderValue(setting: HslSliderSetting, value: number): string {
 	const normalizedValue = normalizeHslSliderValue(setting, value);
 	return setting === "hue" ? `${normalizedValue}°` : `${normalizedValue}%`;
-}
-
-function getHslSliderAriaValue(setting: HslSliderSetting, value: number): string {
-	const valueText = formatHslSliderValue(setting, value);
-	return setting === "hue" ? `${valueText} hue` : `${getHslSliderLabel(setting)} ${valueText}`;
-}
-
-function getHslSliderLabel(setting: HslSliderSetting): string {
-	switch (setting) {
-		case "hue":
-			return "Hue";
-
-		case "saturation":
-			return "Saturation";
-
-		case "lightness":
-			return "Lightness";
-
-		default:
-			return "HSL";
-	}
 }
 
 function getColorWheelHueFromPointer(element: HTMLElement, clientX: number, clientY: number): number {
@@ -5389,6 +6184,244 @@ function formatHexColor(value: string): string {
 	return (normalizeHexColor(value) ?? DEFAULT_CUSTOM_COLOR).toUpperCase();
 }
 
+function formatHslColor(color: HslColor): string {
+	const hue = getHslSliderValue("hue", color);
+	const saturation = getHslSliderValue("saturation", color);
+	const lightness = getHslSliderValue("lightness", color);
+
+	return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+}
+
+function formatRgbColor(color: RgbColor): string {
+	return `rgb(${normalizeRgbChannel(color.r)}, ${normalizeRgbChannel(color.g)}, ${normalizeRgbChannel(color.b)})`;
+}
+
+function formatLabColor(color: LabColor): string {
+	return `lab(${normalizeLabLightness(color.l)}% ${normalizeLabAxis(color.a)} ${normalizeLabAxis(color.b)})`;
+}
+
+function parseHslColor(value: string): HslColor | null {
+	const trimmedValue = value.trim();
+
+	if (!trimmedValue) {
+		return null;
+	}
+
+	const hslMatch = /^hsla?\(\s*(.*?)\s*\)$/i.exec(trimmedValue);
+	const rawBody = hslMatch?.[1] ?? trimmedValue;
+	const body = rawBody.replace(/\s*\/\s*[-+]?(?:\d+\.?\d*|\.\d+)%?\s*$/, "").trim();
+	const parts = body.includes(",")
+		? body.split(",").map((part) => part.trim()).filter((part) => part.length > 0)
+		: body.split(/\s+/).map((part) => part.trim()).filter((part) => part.length > 0);
+
+	if (parts.length !== 3 && parts.length !== 4) {
+		return null;
+	}
+
+	const [huePart, saturationPart, lightnessPart] = parts;
+
+	if (huePart === undefined || saturationPart === undefined || lightnessPart === undefined) {
+		return null;
+	}
+
+	const hue = parseHslHueValue(huePart);
+	const saturation = parseHslPercentageValue(saturationPart);
+	const lightness = parseHslPercentageValue(lightnessPart);
+
+	if (hue === null || saturation === null || lightness === null) {
+		return null;
+	}
+
+	return {
+		h: normalizeHue(hue),
+		s: saturation / 100,
+		l: lightness / 100,
+	};
+}
+
+function parseRgbColor(value: string): RgbColor | null {
+	const parts = getColorInputParts(value, /^rgba?\(\s*(.*?)\s*\)$/i);
+
+	if (!parts) {
+		return null;
+	}
+
+	const [redPart, greenPart, bluePart] = parts;
+
+	if (redPart === undefined || greenPart === undefined || bluePart === undefined) {
+		return null;
+	}
+
+	const red = parseRgbChannelValue(redPart);
+	const green = parseRgbChannelValue(greenPart);
+	const blue = parseRgbChannelValue(bluePart);
+
+	if (red === null || green === null || blue === null) {
+		return null;
+	}
+
+	return {r: red, g: green, b: blue};
+}
+
+function parseLabColor(value: string): LabColor | null {
+	const parts = getColorInputParts(value, /^lab\(\s*(.*?)\s*\)$/i);
+
+	if (!parts) {
+		return null;
+	}
+
+	const [lightnessPart, aPart, bPart] = parts;
+
+	if (lightnessPart === undefined || aPart === undefined || bPart === undefined) {
+		return null;
+	}
+
+	const lightness = parseLabLightnessValue(lightnessPart);
+	const a = parseLabAxisValue(aPart);
+	const b = parseLabAxisValue(bPart);
+
+	if (lightness === null || a === null || b === null) {
+		return null;
+	}
+
+	return {l: lightness, a, b};
+}
+
+function getColorInputParts(value: string, functionPattern: RegExp): string[] | null {
+	const trimmedValue = value.trim();
+
+	if (!trimmedValue) {
+		return null;
+	}
+
+	const functionMatch = functionPattern.exec(trimmedValue);
+
+	if (/^[a-z]+\(/i.test(trimmedValue) && !functionMatch) {
+		return null;
+	}
+
+	const rawBody = functionMatch?.[1] ?? trimmedValue;
+	const body = rawBody.replace(/\s*\/\s*[-+]?(?:\d+\.?\d*|\.\d+)%?\s*$/, "").trim();
+	const parts = body.includes(",")
+		? body.split(",").map((part) => part.trim()).filter((part) => part.length > 0)
+		: body.split(/\s+/).map((part) => part.trim()).filter((part) => part.length > 0);
+
+	return parts.length === 3 || parts.length === 4 ? parts : null;
+}
+
+function parseRgbChannelValue(value: string): number | null {
+	const match = /^([-+]?(?:\d+\.?\d*|\.\d+))(%?)$/.exec(value.trim());
+	const numericText = match?.[1];
+
+	if (numericText === undefined) {
+		return null;
+	}
+
+	const numericValue = Number(numericText);
+
+	if (!Number.isFinite(numericValue)) {
+		return null;
+	}
+
+	const channelValue = match?.[2] === "%" ? numericValue / 100 * RGB_CHANNEL_MAX : numericValue;
+
+	if (channelValue < RGB_CHANNEL_MIN || channelValue > RGB_CHANNEL_MAX) {
+		return null;
+	}
+
+	return normalizeRgbChannel(channelValue);
+}
+
+function parseLabLightnessValue(value: string): number | null {
+	const match = /^([-+]?(?:\d+\.?\d*|\.\d+))%?$/.exec(value.trim());
+	const numericText = match?.[1];
+
+	if (numericText === undefined) {
+		return null;
+	}
+
+	const numericValue = Number(numericText);
+
+	if (!Number.isFinite(numericValue) || numericValue < LAB_LIGHTNESS_MIN || numericValue > LAB_LIGHTNESS_MAX) {
+		return null;
+	}
+
+	return normalizeLabLightness(numericValue);
+}
+
+function parseLabAxisValue(value: string): number | null {
+	const match = /^([-+]?(?:\d+\.?\d*|\.\d+))$/.exec(value.trim());
+	const numericText = match?.[1];
+
+	if (numericText === undefined) {
+		return null;
+	}
+
+	const numericValue = Number(numericText);
+
+	if (!Number.isFinite(numericValue) || numericValue < LAB_AB_MIN || numericValue > LAB_AB_MAX) {
+		return null;
+	}
+
+	return normalizeLabAxis(numericValue);
+}
+
+function parseHslHueValue(value: string): number | null {
+	const match = /^([-+]?(?:\d+\.?\d*|\.\d+))(deg|°|rad|turn|grad)?$/i.exec(value.trim());
+	const numericText = match?.[1];
+
+	if (numericText === undefined) {
+		return null;
+	}
+
+	const numericValue = Number(numericText);
+
+	if (!Number.isFinite(numericValue)) {
+		return null;
+	}
+
+	const unit = match?.[2]?.toLowerCase() ?? "deg";
+
+	switch (unit) {
+		case "turn":
+			return numericValue * 360;
+
+		case "rad":
+			return numericValue * 180 / Math.PI;
+
+		case "grad":
+			return numericValue * 0.9;
+
+		case "deg":
+		case "°":
+			return numericValue;
+
+		default:
+			return null;
+	}
+}
+
+function parseHslPercentageValue(value: string): number | null {
+	const match = /^([-+]?(?:\d+\.?\d*|\.\d+))%?$/.exec(value.trim());
+	const numericText = match?.[1];
+
+	if (numericText === undefined) {
+		return null;
+	}
+
+	const numericValue = Number(numericText);
+
+	if (!Number.isFinite(numericValue) || numericValue < 0 || numericValue > 100) {
+		return null;
+	}
+
+	return numericValue;
+}
+
+function setHslInputValidity(inputEl: HTMLInputElement, isValid: boolean): void {
+	setHexInputValidity(inputEl, isValid);
+}
+
 function setHexInputValidity(inputEl: HTMLInputElement, isValid: boolean): void {
 	inputEl.classList.toggle("is-invalid", !isValid);
 	inputEl.setAttribute("aria-invalid", (!isValid).toString());
@@ -5463,6 +6496,11 @@ function hexToHsv(hexColor: string): HsvColor | null {
 function hexToHsl(hexColor: string): HslColor | null {
 	const rgbColor = hexToRgb(hexColor);
 	return rgbColor ? rgbToHsl(rgbColor) : null;
+}
+
+function hexToLab(hexColor: string): LabColor | null {
+	const rgbColor = hexToRgb(hexColor);
+	return rgbColor ? rgbToLab(rgbColor) : null;
 }
 
 function rgbToHsv(color: RgbColor): HsvColor {
@@ -5600,6 +6638,83 @@ function hslToRgb(color: HslColor): RgbColor {
 	};
 }
 
+function labToHex(color: LabColor): string {
+	return rgbToHex(labToRgb(color));
+}
+
+function rgbToLab(color: RgbColor): LabColor {
+	const xyz = rgbToXyz(color);
+	const x = labPivotXyz(xyz.x / 0.95047);
+	const y = labPivotXyz(xyz.y);
+	const z = labPivotXyz(xyz.z / 1.08883);
+
+	return {
+		l: 116 * y - 16,
+		a: 500 * (x - y),
+		b: 200 * (y - z),
+	};
+}
+
+function labToRgb(color: LabColor): RgbColor {
+	const normalizedColor = {
+		l: Math.min(LAB_LIGHTNESS_MAX, Math.max(LAB_LIGHTNESS_MIN, Number.isFinite(color.l) ? color.l : 0)),
+		a: Math.min(LAB_AB_MAX, Math.max(LAB_AB_MIN, Number.isFinite(color.a) ? color.a : 0)),
+		b: Math.min(LAB_AB_MAX, Math.max(LAB_AB_MIN, Number.isFinite(color.b) ? color.b : 0)),
+	};
+	const y = (normalizedColor.l + 16) / 116;
+	const x = normalizedColor.a / 500 + y;
+	const z = y - normalizedColor.b / 200;
+	const xyz = {
+		x: 0.95047 * labPivotInverse(x),
+		y: labPivotInverse(y),
+		z: 1.08883 * labPivotInverse(z),
+	};
+
+	return xyzToRgb(xyz);
+}
+
+function rgbToXyz(color: RgbColor): {x: number; y: number; z: number} {
+	const red = srgbToLinear(clampRgb(color.r) / 255);
+	const green = srgbToLinear(clampRgb(color.g) / 255);
+	const blue = srgbToLinear(clampRgb(color.b) / 255);
+
+	return {
+		x: red * 0.4124564 + green * 0.3575761 + blue * 0.1804375,
+		y: red * 0.2126729 + green * 0.7151522 + blue * 0.072175,
+		z: red * 0.0193339 + green * 0.119192 + blue * 0.9503041,
+	};
+}
+
+function xyzToRgb(color: {x: number; y: number; z: number}): RgbColor {
+	const red = color.x * 3.2404542 + color.y * -1.5371385 + color.z * -0.4985314;
+	const green = color.x * -0.969266 + color.y * 1.8760108 + color.z * 0.041556;
+	const blue = color.x * 0.0556434 + color.y * -0.2040259 + color.z * 1.0572252;
+
+	return {
+		r: linearToSrgb(red) * 255,
+		g: linearToSrgb(green) * 255,
+		b: linearToSrgb(blue) * 255,
+	};
+}
+
+function srgbToLinear(value: number): number {
+	return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function linearToSrgb(value: number): number {
+	const clampedValue = Math.min(1, Math.max(0, value));
+	return clampedValue <= 0.0031308 ? clampedValue * 12.92 : 1.055 * (clampedValue ** (1 / 2.4)) - 0.055;
+}
+
+function labPivotXyz(value: number): number {
+	return value > 216 / 24389 ? Math.cbrt(value) : (841 / 108) * value + 4 / 29;
+}
+
+function labPivotInverse(value: number): number {
+	const cubedValue = value ** 3;
+	return cubedValue > 216 / 24389 ? cubedValue : (108 / 841) * (value - 4 / 29);
+}
+
 function mixRgb(from: RgbColor, to: RgbColor, amount: number): RgbColor {
 	return {
 		r: Math.round(from.r + (to.r - from.r) * amount),
@@ -5614,6 +6729,35 @@ function rgbToHex(color: RgbColor): string {
 
 function clampRgb(value: number): number {
 	return Math.min(255, Math.max(0, Math.round(value)));
+}
+
+function normalizeRgbChannel(value: number): number {
+	const numericValue = Number.isFinite(value) ? value : RGB_CHANNEL_MIN;
+	const steppedValue = Math.round(numericValue / RGB_CHANNEL_STEP) * RGB_CHANNEL_STEP;
+
+	return Math.min(RGB_CHANNEL_MAX, Math.max(RGB_CHANNEL_MIN, steppedValue));
+}
+
+function normalizeLabLightness(value: number): number {
+	const numericValue = Number.isFinite(value) ? value : LAB_LIGHTNESS_MIN;
+	const steppedValue = Math.round(numericValue / LAB_SLIDER_STEP) * LAB_SLIDER_STEP;
+
+	return Math.min(LAB_LIGHTNESS_MAX, Math.max(LAB_LIGHTNESS_MIN, steppedValue));
+}
+
+function normalizeLabAxis(value: number): number {
+	const numericValue = Number.isFinite(value) ? value : 0;
+	const steppedValue = Math.round(numericValue / LAB_SLIDER_STEP) * LAB_SLIDER_STEP;
+
+	return Math.min(LAB_AB_MAX, Math.max(LAB_AB_MIN, steppedValue));
+}
+
+function normalizeLabColor(color: LabColor): LabColor {
+	return {
+		l: normalizeLabLightness(color.l),
+		a: normalizeLabAxis(color.a),
+		b: normalizeLabAxis(color.b),
+	};
 }
 
 function clampUnit(value: number): number {
