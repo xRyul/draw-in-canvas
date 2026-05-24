@@ -57,9 +57,10 @@ const RESIZE_SCALE_EPSILON = 0.001;
 const MIN_SCALED_STROKE_WIDTH = 0.001;
 const SAVE_DEBOUNCE_MS = 300;
 const TOOLBAR_LONG_PRESS_MS = 450;
+const CAPTURE_LAYER_Z_INDEX = 3;
+const MIN_TOOLBAR_CONTROLS_Z_INDEX = CAPTURE_LAYER_Z_INDEX + 1;
 const ACTIVE_STROKE_PREVIEW_WINDOW_SIZE = 160;
 const ACTIVE_STROKE_PREVIEW_CHUNK_SIZE = 96;
-const ACTIVE_STROKE_PREVIEW_OVERLAP = 8;
 const PRESET_STROKE_COLORS = [
 	{name: "Red", value: "#ef4444"},
 	{name: "Orange", value: "#f97316"},
@@ -328,6 +329,8 @@ export class DrawingLayer {
 	private toolbarGroupEl: HTMLElement | null = null;
 	private toolbarButtonEl: HTMLElement | null = null;
 	private selectButtonEl: HTMLElement | null = null;
+	private toolbarControlsEl: HTMLElement | null = null;
+	private toolbarControlsOriginalZIndex: string | null = null;
 	private colorPaletteEl: HTMLElement | null = null;
 	private strokeSettingsPaletteEl: HTMLElement | null = null;
 	private brushControlsEl: HTMLElement | null = null;
@@ -667,11 +670,13 @@ export class DrawingLayer {
 		this.syncCanvasHistoryButtonListeners(controlsEl);
 
 		if (this.toolbarGroupEl?.isConnected && this.toolbarGroupEl.parentElement === controlsEl) {
+			this.ensureToolbarControlsAboveCaptureLayer(controlsEl);
 			this.syncToolbarButton();
 			return;
 		}
 
 		this.removeToolbarButton();
+		this.ensureToolbarControlsAboveCaptureLayer(controlsEl);
 
 		const groupEl = document.createElement("div");
 		groupEl.classList.add("canvas-control-group", "mod-raised", "draw-in-canvas-control-group");
@@ -716,6 +721,7 @@ export class DrawingLayer {
 	private removeToolbarButton(): void {
 		this.closeBrushPopovers();
 		this.clearToolbarPressState();
+		this.restoreToolbarControlsZIndex();
 		for (const dispose of this.toolbarDisposers.splice(0)) {
 			dispose();
 		}
@@ -724,6 +730,33 @@ export class DrawingLayer {
 		this.toolbarGroupEl = null;
 		this.toolbarButtonEl = null;
 		this.selectButtonEl = null;
+	}
+
+	private ensureToolbarControlsAboveCaptureLayer(controlsEl: HTMLElement): void {
+		if (this.toolbarControlsEl && this.toolbarControlsEl !== controlsEl) {
+			this.restoreToolbarControlsZIndex();
+		}
+
+		if (!this.toolbarControlsEl) {
+			this.toolbarControlsEl = controlsEl;
+			this.toolbarControlsOriginalZIndex = controlsEl.style.zIndex;
+		}
+
+		const currentZIndex = Number.parseInt(window.getComputedStyle(controlsEl).zIndex, 10);
+
+		if (!Number.isFinite(currentZIndex) || currentZIndex <= CAPTURE_LAYER_Z_INDEX) {
+			controlsEl.style.zIndex = MIN_TOOLBAR_CONTROLS_Z_INDEX.toString();
+		}
+	}
+
+	private restoreToolbarControlsZIndex(): void {
+		if (!this.toolbarControlsEl) {
+			return;
+		}
+
+		this.toolbarControlsEl.style.zIndex = this.toolbarControlsOriginalZIndex ?? "";
+		this.toolbarControlsEl = null;
+		this.toolbarControlsOriginalZIndex = null;
 	}
 
 	private syncToolbarButton(): void {
@@ -2816,7 +2849,9 @@ export class DrawingLayer {
 		const strokeGroupEl = document.createElementNS(SVG_NS, "g");
 		strokeGroupEl.classList.add("draw-in-canvas-active-stroke");
 		strokeGroupEl.setAttribute("pointer-events", "none");
+		strokeGroupEl.setAttribute("opacity", formatStrokeOpacityRatio(stroke.opacity));
 		const activeStrokePathEl = this.createPathEl(stroke, false);
+		activeStrokePathEl.removeAttribute("opacity");
 		strokeGroupEl.appendChild(activeStrokePathEl);
 
 		this.activeStroke = stroke;
@@ -3080,6 +3115,7 @@ export class DrawingLayer {
 		const tailStartIndex = Math.max(0, this.activeStrokePreviewCommittedPointIndex - 1);
 		const tailStroke = getStrokePointSubset(stroke, tailStartIndex, stroke.points.length);
 		this.updateLinearStrokePathEl(this.activeStrokePathEl, tailStroke);
+		this.activeStrokePathEl.removeAttribute("opacity");
 	}
 
 	private flushLinearActiveStrokePreviewChunks(stroke: CanvasStroke): void {
@@ -3099,6 +3135,7 @@ export class DrawingLayer {
 			const chunkPathEl = document.createElementNS(SVG_NS, "path");
 			chunkPathEl.classList.add("draw-in-canvas-stroke");
 			this.updateLinearStrokePathEl(chunkPathEl, chunkStroke);
+			chunkPathEl.removeAttribute("opacity");
 
 			this.activeStrokeGroupEl.insertBefore(chunkPathEl, this.activeStrokePathEl);
 			this.activeStrokePreviewChunkPathEls.push(chunkPathEl);
@@ -3124,45 +3161,17 @@ export class DrawingLayer {
 			return;
 		}
 
-		this.flushActiveStrokePreviewChunks(stroke, hasPressure);
-
-		const tailStartIndex = Math.max(0, this.activeStrokePreviewCommittedPointIndex - ACTIVE_STROKE_PREVIEW_OVERLAP);
-		const tailStroke = getStrokePointSubset(stroke, tailStartIndex, stroke.points.length);
-		this.updateVisibleStrokePathEl(this.activeStrokePathEl, tailStroke, false, {
+		// The perfect-freehand outline is not segment-stable: splitting a live stroke into chunks
+		// creates artificial caps and slightly different outlines at chunk seams. Render the
+		// active handwritten stroke as one path so the preview stays visually continuous.
+		this.resetActiveStrokePreviewState();
+		this.updateVisibleStrokePathEl(this.activeStrokePathEl, stroke, false, {
 			hasPressure,
-			isStart: tailStartIndex === 0,
+			isStart: true,
 			isEnd: true,
 		});
+		this.activeStrokePathEl.removeAttribute("opacity");
 	}
-
-	private flushActiveStrokePreviewChunks(stroke: CanvasStroke, hasPressure: boolean): void {
-		if (!this.activeStrokeGroupEl || !this.activeStrokePathEl) {
-			return;
-		}
-
-		while (stroke.points.length - this.activeStrokePreviewCommittedPointIndex > ACTIVE_STROKE_PREVIEW_WINDOW_SIZE + ACTIVE_STROKE_PREVIEW_CHUNK_SIZE) {
-			const chunkStartIndex = this.activeStrokePreviewCommittedPointIndex;
-			const chunkEndIndex = Math.min(chunkStartIndex + ACTIVE_STROKE_PREVIEW_CHUNK_SIZE, stroke.points.length);
-
-			if (chunkEndIndex - chunkStartIndex < 2) {
-				return;
-			}
-
-			const chunkStroke = getStrokePointSubset(stroke, chunkStartIndex, chunkEndIndex);
-			const chunkPathEl = document.createElementNS(SVG_NS, "path");
-			chunkPathEl.classList.add("draw-in-canvas-stroke");
-			this.updateVisibleStrokePathEl(chunkPathEl, chunkStroke, false, {
-				hasPressure,
-				isStart: chunkStartIndex === 0,
-				isEnd: false,
-			});
-
-			this.activeStrokeGroupEl.insertBefore(chunkPathEl, this.activeStrokePathEl);
-			this.activeStrokePreviewChunkPathEls.push(chunkPathEl);
-			this.activeStrokePreviewCommittedPointIndex = chunkEndIndex;
-		}
-	}
-
 	private cancelActiveStrokePreviewUpdate(): void {
 		if (this.activeStrokePreviewFrameId === null) {
 			return;
