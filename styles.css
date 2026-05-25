@@ -1233,6 +1233,45 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	stroke-width: 2.4px;
 }
 
+/* Obsidian's native reset/fit zoom icons are visually similar; use short text labels instead. */
+.canvas-controls .canvas-control-item[aria-label^="Reset zoom"],
+.canvas-controls .canvas-control-item[aria-label^="Zoom to fit"],
+.canvas-controls .canvas-control-item[aria-label^="Fit"] {
+	position: relative;
+	overflow: hidden;
+}
+
+.canvas-controls .canvas-control-item[aria-label^="Reset zoom"] svg,
+.canvas-controls .canvas-control-item[aria-label^="Zoom to fit"] svg,
+.canvas-controls .canvas-control-item[aria-label^="Fit"] svg {
+	visibility: hidden;
+}
+
+.canvas-controls .canvas-control-item[aria-label^="Reset zoom"]::before,
+.canvas-controls .canvas-control-item[aria-label^="Zoom to fit"]::before,
+.canvas-controls .canvas-control-item[aria-label^="Fit"]::before {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	color: currentColor;
+	font-size: 10px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.06em;
+	line-height: 1;
+	pointer-events: none;
+}
+
+.canvas-controls .canvas-control-item[aria-label^="Reset zoom"]::before {
+	content: "100%";
+}
+
+.canvas-controls .canvas-control-item[aria-label^="Zoom to fit"]::before,
+.canvas-controls .canvas-control-item[aria-label^="Fit"]::before {
+	content: "Fit";
+}
+
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node .canvas-node-container {
 	border-width: 0 !important;
 	border-radius: min(var(--radius-m), 4%);
