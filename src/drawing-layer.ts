@@ -45,6 +45,13 @@ import {
 	getHandwrittenActiveStrokePreviewTailStartIndex,
 	getNextHandwrittenActiveStrokePreviewChunk,
 } from "./active-stroke-preview";
+import {
+	StrokeSpatialIndex,
+	expandSpatialBounds,
+	getPointSpatialQueryBounds,
+	getStrokeSpatialIndexBounds,
+	type StrokeSpatialIndexEntry,
+} from "./stroke-spatial-index";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const MIN_POINT_DISTANCE = 1;
@@ -356,6 +363,7 @@ export class DrawingLayer {
 	private readonly strokeById = new Map<string, CanvasStroke>();
 	private readonly strokeGroupById = new Map<string, SVGGElement>();
 	private readonly strokeBoundsById = new Map<string, StrokeBounds>();
+	private readonly strokeSpatialIndex = new StrokeSpatialIndex();
 	private captureEl: HTMLDivElement | null = null;
 	private svgEl: SVGSVGElement | null = null;
 	private strokeInteractionEl: HTMLElement | null = null;
@@ -4892,11 +4900,18 @@ export class DrawingLayer {
 		const selectionBounds = getBoundsFromPoints(state.startPoint, state.currentPoint);
 		const selectedStrokeIds = state.isAdditive ? new Set(state.initialSelectedStrokeIds) : new Set<string>();
 		const screenSelectionPadding = this.getCanvasUnitsForScreenPixels(SELECTION_PADDING);
+		const candidateStrokeIds = this.strokeSpatialIndex.queryBounds(expandSpatialBounds(selectionBounds, screenSelectionPadding));
 
-		for (const stroke of this.drawingData.strokes) {
+		for (const strokeId of candidateStrokeIds) {
+			const stroke = this.findStroke(strokeId);
+
+			if (!stroke) {
+				continue;
+			}
+
 			const bounds = this.getStrokeBounds(stroke);
-
 			const selectionPadding = Math.max(stroke.width / 2, screenSelectionPadding);
+
 			if (!bounds || !doBoundsIntersect(selectionBounds, bounds, selectionPadding)) {
 				continue;
 			}
@@ -4904,9 +4919,7 @@ export class DrawingLayer {
 			selectedStrokeIds.add(stroke.id);
 		}
 
-		return this.drawingData.strokes
-			.map((stroke) => stroke.id)
-			.filter((strokeId) => selectedStrokeIds.has(strokeId));
+		return this.strokeSpatialIndex.sortIdsByOrder(Array.from(selectedStrokeIds));
 	}
 
 	private clearNativeSelectionDrag(): void {
@@ -5083,7 +5096,14 @@ export class DrawingLayer {
 			completedStroke.points.push(dotEndPoint);
 		}
 
-		this.setStrokeBounds(completedStroke);
+		const completedBounds = this.setStrokeBounds(completedStroke);
+
+		if (completedBounds) {
+			this.strokeSpatialIndex.updateBounds(
+				completedStroke.id,
+				getStrokeSpatialIndexBounds(completedBounds, completedStroke.width),
+			);
+		}
 		this.activeStrokeGroupEl?.replaceWith(this.createStrokeGroupEl(completedStroke));
 		this.activeStroke = null;
 		this.activeStrokeGroupEl = null;
@@ -5822,8 +5842,14 @@ export class DrawingLayer {
 	private findStrokeAtPoint(point: StrokePoint): CanvasStroke | null {
 		const hitTargetPadding = this.getCanvasUnitsForScreenPixels(HIT_TARGET_PADDING);
 		const minHitTargetSize = this.getCanvasUnitsForScreenPixels(MIN_HIT_TARGET_SIZE);
-		for (let index = this.drawingData.strokes.length - 1; index >= 0; index--) {
-			const stroke = this.drawingData.strokes[index];
+		const queryRadius = Math.max(hitTargetPadding, minHitTargetSize) / 2;
+		const candidateStrokeIds = this.strokeSpatialIndex.queryBounds(
+			getPointSpatialQueryBounds(point, queryRadius),
+			"descending",
+		);
+
+		for (const strokeId of candidateStrokeIds) {
+			const stroke = this.findStroke(strokeId);
 
 			if (!stroke) {
 				continue;
@@ -5853,6 +5879,8 @@ export class DrawingLayer {
 
 		this.strokeById.delete(strokeId);
 		this.strokeBoundsById.delete(strokeId);
+		this.strokeSpatialIndex.remove(strokeId);
+		this.strokeSpatialIndex.setOrder(this.getStrokeIds());
 		this.findStrokeGroupEl(strokeId)?.remove();
 		this.strokeGroupById.delete(strokeId);
 	}
@@ -5871,11 +5899,28 @@ export class DrawingLayer {
 	private rebuildStrokeIndex(): void {
 		this.strokeById.clear();
 		this.strokeBoundsById.clear();
+		const spatialEntries: StrokeSpatialIndexEntry[] = [];
 
-		for (const stroke of this.drawingData.strokes) {
+		for (let order = 0; order < this.drawingData.strokes.length; order++) {
+			const stroke = this.drawingData.strokes[order];
+
+			if (!stroke) {
+				continue;
+			}
+
 			this.strokeById.set(stroke.id, stroke);
-			this.setStrokeBounds(stroke);
+			const bounds = this.setStrokeBounds(stroke);
+
+			if (bounds) {
+				spatialEntries.push({
+					id: stroke.id,
+					bounds: getStrokeSpatialIndexBounds(bounds, stroke.width),
+					order,
+				});
+			}
 		}
+
+		this.strokeSpatialIndex.rebuild(spatialEntries);
 	}
 
 	private setStrokes(strokes: CanvasStroke[]): void {
@@ -5889,12 +5934,17 @@ export class DrawingLayer {
 
 	private applyStrokeOrder(strokeIds: readonly string[]): void {
 		this.drawingData.strokes = orderItemsByIds(this.drawingData.strokes, strokeIds);
+		this.strokeSpatialIndex.setOrder(this.getStrokeIds());
 	}
 
 	private addStroke(stroke: CanvasStroke): void {
 		this.drawingData.strokes.push(stroke);
 		this.strokeById.set(stroke.id, stroke);
-		this.setStrokeBounds(stroke);
+		const bounds = this.setStrokeBounds(stroke);
+
+		if (bounds) {
+			this.strokeSpatialIndex.set(stroke.id, getStrokeSpatialIndexBounds(bounds, stroke.width), this.drawingData.strokes.length - 1);
+		}
 	}
 
 	private removeStrokes(strokeIds: readonly string[]): void {
@@ -5904,11 +5954,13 @@ export class DrawingLayer {
 		for (const strokeId of strokeIdSet) {
 			this.strokeById.delete(strokeId);
 			this.strokeBoundsById.delete(strokeId);
+			this.strokeSpatialIndex.remove(strokeId);
 			this.findStrokeGroupEl(strokeId)?.remove();
 			this.strokeGroupById.delete(strokeId);
 			this.selectedStrokeIds.delete(strokeId);
 		}
 
+		this.strokeSpatialIndex.setOrder(this.getStrokeIds());
 		this.renderSelectionBox();
 	}
 
@@ -5924,9 +5976,9 @@ export class DrawingLayer {
 			const insertIndex = Math.max(0, Math.min(indices[index] ?? this.drawingData.strokes.length, this.drawingData.strokes.length));
 
 			this.drawingData.strokes.splice(insertIndex, 0, stroke);
-			this.strokeById.set(stroke.id, stroke);
-			this.setStrokeBounds(stroke);
 		}
+
+		this.rebuildStrokeIndex();
 	}
 
 	private getStrokeBounds(stroke: CanvasStroke): StrokeBounds | null {
@@ -5949,11 +6001,13 @@ export class DrawingLayer {
 		translatePointsInPlace(stroke.points, delta);
 
 		const bounds = this.strokeBoundsById.get(stroke.id);
+		const nextBounds = bounds ? translateBounds(bounds, delta) : this.setStrokeBounds(stroke);
 
-		if (bounds) {
-			this.strokeBoundsById.set(stroke.id, translateBounds(bounds, delta));
+		if (nextBounds) {
+			this.strokeBoundsById.set(stroke.id, nextBounds);
+			this.strokeSpatialIndex.updateBounds(stroke.id, getStrokeSpatialIndexBounds(nextBounds, stroke.width));
 		} else {
-			this.setStrokeBounds(stroke);
+			this.strokeSpatialIndex.remove(stroke.id);
 		}
 	}
 
@@ -5962,11 +6016,13 @@ export class DrawingLayer {
 		stroke.width = Math.max(MIN_SCALED_STROKE_WIDTH, roundCoordinate(stroke.width * scale));
 
 		const bounds = this.strokeBoundsById.get(stroke.id);
+		const nextBounds = bounds ? scaleBounds(bounds, origin, scale) : this.setStrokeBounds(stroke);
 
-		if (bounds) {
-			this.strokeBoundsById.set(stroke.id, scaleBounds(bounds, origin, scale));
+		if (nextBounds) {
+			this.strokeBoundsById.set(stroke.id, nextBounds);
+			this.strokeSpatialIndex.updateBounds(stroke.id, getStrokeSpatialIndexBounds(nextBounds, stroke.width));
 		} else {
-			this.setStrokeBounds(stroke);
+			this.strokeSpatialIndex.remove(stroke.id);
 		}
 	}
 
