@@ -4,6 +4,12 @@ import {CanvasTarget} from "./canvas-target";
 import {NativeCanvasInteractionLimits} from "./canvas-limits";
 import {NativeCanvasElementScaleControls} from "./canvas-element-scale-controls";
 import {
+	CANVAS_DOM_MUTATION_SYNC_ALL,
+	getCanvasDomMutationSyncFlags,
+	mergeCanvasDomMutationSyncFlags,
+	type CanvasDomMutationSyncFlags,
+} from "./canvas-dom-mutations";
+import {
 	DrawInCanvasSettings,
 	FREEHAND_SLIDER_SETTINGS,
 	FreehandSliderSetting,
@@ -539,6 +545,7 @@ export class DrawingLayer {
 	private mutationObserver: MutationObserver | null = null;
 	private isObservingCanvasAttributes: boolean | null = null;
 	private domSyncFrameId: number | null = null;
+	private pendingDomSyncFlags: CanvasDomMutationSyncFlags | null = null;
 	private renderViewportObserver: MutationObserver | null = null;
 	private renderViewportObservedEl: HTMLElement | null = null;
 	private renderViewportFrameId: number | null = null;
@@ -624,6 +631,7 @@ export class DrawingLayer {
 		if (this.domSyncFrameId !== null) {
 			window.cancelAnimationFrame(this.domSyncFrameId);
 			this.domSyncFrameId = null;
+			this.pendingDomSyncFlags = null;
 		}
 
 		this.disconnectRenderViewportObserver();
@@ -3239,7 +3247,7 @@ export class DrawingLayer {
 	}
 
 	private observeCanvasDom(): void {
-		this.mutationObserver = new MutationObserver(() => this.scheduleCanvasDomSync());
+		this.mutationObserver = new MutationObserver((records) => this.scheduleCanvasDomSync(getCanvasDomMutationSyncFlags(records)));
 		this.syncCanvasDomObserver();
 	}
 
@@ -3258,6 +3266,7 @@ export class DrawingLayer {
 		this.mutationObserver.observe(this.target.containerEl, shouldObserveAttributes ? {
 			attributes: true,
 			attributeFilter: ["class", "style"],
+			attributeOldValue: true,
 			childList: true,
 			subtree: true,
 		} : {
@@ -3267,16 +3276,22 @@ export class DrawingLayer {
 		this.isObservingCanvasAttributes = shouldObserveAttributes;
 	}
 
-	private scheduleCanvasDomSync(): void {
+	private scheduleCanvasDomSync(flags: CanvasDomMutationSyncFlags = CANVAS_DOM_MUTATION_SYNC_ALL): void {
+		this.pendingDomSyncFlags = this.pendingDomSyncFlags
+			? mergeCanvasDomMutationSyncFlags(this.pendingDomSyncFlags, flags)
+			: flags;
+
 		if (this.domSyncFrameId !== null) {
 			return;
 		}
 
 		this.domSyncFrameId = window.requestAnimationFrame(() => {
+			const syncFlags = this.pendingDomSyncFlags ?? CANVAS_DOM_MUTATION_SYNC_ALL;
+			this.pendingDomSyncFlags = null;
 			this.domSyncFrameId = null;
 			this.mountRenderLayer();
 			this.injectToolbarButton();
-			const didTinyControlScaleChange = this.syncTinyCanvasFeaturesForDomChange();
+			const didTinyControlScaleChange = this.syncTinyCanvasFeaturesForDomChange(syncFlags);
 			if (this.selectedStrokeIds.size > 0 && !this.dragState && !this.resizeState && !this.nativeSelectionDragState) {
 				if (didTinyControlScaleChange) {
 					this.renderSelectionBox();
@@ -3297,15 +3312,22 @@ export class DrawingLayer {
 		return didTinyControlScaleChange;
 	}
 
-	private syncTinyCanvasFeaturesForDomChange(): boolean {
+	private syncTinyCanvasFeaturesForDomChange(flags: CanvasDomMutationSyncFlags): boolean {
 		if (this.settings.allowTinyCanvasElements) {
-			const didTinyControlScaleChange = this.syncTinyControlScale();
+			const didTinyControlScaleChange = flags.syncTinyCanvasControls ? this.syncTinyControlScale() : false;
 			this.nativeCanvasLimits.setEnabled(true);
-			this.nativeElementScaleControls.syncForCanvasDomChange();
+
+			if (flags.syncNativeElementControls) {
+				this.nativeElementScaleControls.syncForCanvasDomChange();
+			}
+
 			return didTinyControlScaleChange;
 		}
 
-		this.nativeElementScaleControls.syncForCanvasDomChange();
+		if (flags.syncNativeElementControls) {
+			this.nativeElementScaleControls.syncForCanvasDomChange();
+		}
+
 		return false;
 	}
 
