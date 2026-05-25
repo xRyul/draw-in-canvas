@@ -1,10 +1,12 @@
 import {setIcon} from "obsidian";
 import type {CanvasTarget} from "./canvas-target";
 import {
+	getLayerActionAvailability,
 	hasLayerOrderChanged,
 	orderItemsByIds,
 	reorderIdsByLayerAction,
 	type LayerAction,
+	type LayerActionAvailability,
 } from "./layering";
 
 // Obsidian's Canvas API is internal, so keep native canvas element menu patches isolated here.
@@ -236,7 +238,8 @@ export class NativeCanvasElementScaleControls {
 		const submenuEl = document.createElement("div");
 		submenuEl.classList.add("canvas-menu", "draw-in-canvas-layer-submenu");
 		submenuEl.setAttribute("role", "menu");
-		submenuEl.append(...NATIVE_LAYER_ACTIONS.map((action) => this.createLayerActionButton(canvas, action)));
+		const layerActionAvailability = getCanvasLayerActionAvailability(canvas);
+		submenuEl.append(...NATIVE_LAYER_ACTIONS.map((action) => this.createLayerActionButton(layerActionAvailability, action)));
 
 		wrapperEl.append(buttonEl, submenuEl);
 		this.buttonDisposers.push(
@@ -247,13 +250,13 @@ export class NativeCanvasElementScaleControls {
 		return wrapperEl;
 	}
 
-	private createLayerActionButton(canvas: NativeCanvasInstance, action: LayerAction): HTMLButtonElement {
+	private createLayerActionButton(layerActionAvailability: LayerActionAvailability, action: LayerAction): HTMLButtonElement {
 		const buttonConfig = NATIVE_LAYER_BUTTON_CONFIGS[action];
 		const buttonEl = document.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("clickable-icon", LAYER_SUBMENU_BUTTON_CLASS);
 		buttonEl.dataset.layerAction = action;
-		buttonEl.disabled = !canReorderSelectedCanvasNodes(canvas, action);
+		buttonEl.disabled = !layerActionAvailability[action];
 		buttonEl.setAttribute("aria-label", buttonConfig.label);
 		buttonEl.setAttribute("data-tooltip-position", "top");
 		buttonEl.setAttribute("role", "menuitem");
@@ -473,11 +476,12 @@ export class NativeCanvasElementScaleControls {
 	}
 
 	private syncLayerMenuButtonStates(canvas: NativeCanvasInstance): void {
+		const layerActionAvailability = getCanvasLayerActionAvailability(canvas);
 		for (const buttonEl of Array.from(this.layerMenuEl?.querySelectorAll<HTMLButtonElement>(`.${LAYER_SUBMENU_BUTTON_CLASS}`) ?? [])) {
 			const action = toLayerAction(buttonEl.dataset.layerAction);
 
 			if (action) {
-				buttonEl.disabled = !canReorderSelectedCanvasNodes(canvas, action);
+				buttonEl.disabled = !layerActionAvailability[action];
 			}
 		}
 	}
@@ -674,8 +678,8 @@ function getNodeResizePointerdownPrototypes(node: NativeCanvasNode): NativeCanva
 
 function noop(): void {}
 
-function canReorderSelectedCanvasNodes(canvas: NativeCanvasInstance, action: LayerAction): boolean {
-	return hasLayerOrderChanged(getCanvasNodeLayerIds(canvas), getSelectedCanvasNodeIds(canvas), action);
+function getCanvasLayerActionAvailability(canvas: NativeCanvasInstance): LayerActionAvailability {
+	return getLayerActionAvailability(getCanvasNodeLayerIds(canvas), getSelectedCanvasNodeIds(canvas));
 }
 
 function reorderSelectedCanvasNodes(canvas: NativeCanvasInstance, action: LayerAction): boolean {

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	areIdOrdersEqual,
 	hasLayerOrderChanged,
+	getLayerActionAvailability,
 	orderItemsByIds,
 	reorderIdsByLayerAction,
 } from "../src/layering.ts";
@@ -35,6 +36,17 @@ void test("sends non-contiguous selected ids to the back", () => {
 void test("reports no layer order change when selected ids are already at the target edge", () => {
 	assert.equal(hasLayerOrderChanged(["a", "b", "c"], ["b", "c"], "bring-forward"), false);
 	assert.equal(hasLayerOrderChanged(["a", "b", "c"], ["a", "b"], "send-backward"), false);
+});
+
+void test("computes layer action availability for a selected block once ids are known", () => {
+	const availability = getLayerActionAvailability(["a", "b", "c"], new Set(["a", "b"]));
+
+	assert.deepEqual(availability, {
+		"bring-forward": true,
+		"bring-to-front": true,
+		"send-backward": false,
+		"send-to-back": false,
+	});
 });
 
 void test("compares id order by value", () => {

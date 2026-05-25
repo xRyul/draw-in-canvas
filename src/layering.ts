@@ -1,4 +1,5 @@
 export type LayerAction = "bring-forward" | "bring-to-front" | "send-backward" | "send-to-back";
+export type LayerActionAvailability = Record<LayerAction, boolean>;
 
 export function reorderIdsByLayerAction(
 	ids: readonly string[],
@@ -34,6 +35,22 @@ export function hasLayerOrderChanged(
 ): boolean {
 	const reorderedIds = reorderIdsByLayerAction(ids, selectedIds, action);
 	return !areIdOrdersEqual(ids, reorderedIds);
+}
+
+export function getLayerActionAvailability(
+	ids: readonly string[],
+	selectedIds: ReadonlySet<string> | readonly string[],
+): LayerActionAvailability {
+	const selectedIdSet = selectedIds instanceof Set
+		? selectedIds
+		: new Set(selectedIds);
+
+	return {
+		"bring-forward": hasLayerOrderChanged(ids, selectedIdSet, "bring-forward"),
+		"bring-to-front": hasLayerOrderChanged(ids, selectedIdSet, "bring-to-front"),
+		"send-backward": hasLayerOrderChanged(ids, selectedIdSet, "send-backward"),
+		"send-to-back": hasLayerOrderChanged(ids, selectedIdSet, "send-to-back"),
+	};
 }
 
 export function areIdOrdersEqual(a: readonly string[], b: readonly string[]): boolean {
