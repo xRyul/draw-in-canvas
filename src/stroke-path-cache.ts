@@ -1,5 +1,5 @@
-import type {DrawInCanvasSettings} from "./settings";
-import type {CanvasStroke, StrokePoint} from "./types";
+import {getStrokeHandwriting, type StrokeHandwritingSettingsSource} from "./stroke-handwriting.ts";
+import type {CanvasStroke, StrokePoint} from "./types.ts";
 
 // Benchmarked in Obsidian after SVG batching, raster fallback, and tiled raster cache:
 // - Rebuilding same-style batched SVG path data crossed the 16 ms p95 budget around
@@ -18,7 +18,7 @@ export type StrokePathCacheKind = "linear" | "handwritten";
 
 export interface StrokePathCacheKeyOptions {
 	kind: StrokePathCacheKind;
-	settings: DrawInCanvasSettings;
+	settings: StrokeHandwritingSettingsSource;
 	isComplete?: boolean;
 	hasPressure?: boolean;
 	isStart?: boolean;
@@ -111,7 +111,7 @@ export function createStrokePathCacheKey(stroke: CanvasStroke, options: StrokePa
 		stroke.id,
 		options.kind,
 		getStrokeGeometryRevision(stroke),
-		getStrokePathSettingsKey(options),
+		getStrokePathSettingsKey(stroke, options),
 	].join("|");
 }
 
@@ -135,9 +135,11 @@ function formatPointRevision(point: StrokePoint | undefined): string {
 	return [point.x, point.y, point.pressure ?? ""].join(",");
 }
 
-function getStrokePathSettingsKey(options: StrokePathCacheKeyOptions): string {
+function getStrokePathSettingsKey(stroke: CanvasStroke, options: StrokePathCacheKeyOptions): string {
+	const handwriting = getStrokeHandwriting(stroke, options.settings);
+
 	if (options.kind === "linear") {
-		return options.settings.beautifulStrokes ? "smooth" : "linear";
+		return handwriting.enabled ? "smooth" : "linear";
 	}
 
 	return [
@@ -145,11 +147,11 @@ function getStrokePathSettingsKey(options: StrokePathCacheKeyOptions): string {
 		options.hasPressure ?? false,
 		options.isStart ?? true,
 		options.isEnd ?? true,
-		options.settings.strokeThinning,
-		options.settings.strokeSmoothing,
-		options.settings.strokeStreamline,
-		options.settings.strokeTaperStart,
-		options.settings.strokeTaperEnd,
+		handwriting.thinning,
+		handwriting.smoothing,
+		handwriting.streamline,
+		handwriting.taperStart,
+		handwriting.taperEnd,
 	].join(":");
 }
 

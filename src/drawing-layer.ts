@@ -1,5 +1,5 @@
 import {App, Notice, setIcon} from "obsidian";
-import {loadCanvasDrawingData, saveCanvasDrawingData} from "./canvas-file";
+import {loadCanvasDrawingDataWithMetadata, saveCanvasDrawingData} from "./canvas-file";
 import {CanvasTarget} from "./canvas-target";
 import {NativeCanvasInteractionLimits} from "./canvas-limits";
 import {NativeCanvasElementScaleControls} from "./canvas-element-scale-controls";
@@ -21,6 +21,14 @@ import {
 	normalizeStrokeOpacity,
 	normalizeStrokeWidth,
 } from "./settings";
+import {createStrokeHandwriting, getStrokeHandwriting} from "./stroke-handwriting.ts";
+import {
+	areStrokeStylesEqual,
+	cloneStrokeStyle,
+	getStrokeStyle,
+	setStrokeStyle,
+	type CanvasStrokeStyle,
+} from "./stroke-style.ts";
 import {
 	CanvasDrawingData,
 	CanvasStroke,
@@ -274,6 +282,7 @@ interface ParsedColorValue {
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 type BrushSliderSetting = "size" | "opacity";
 type ColorPaletteTarget = "brush" | "selection";
+type StrokeSettingsPaletteTarget = "brush" | "selection";
 type ColorPaletteTab = typeof COLOR_PALETTE_TABS[number]["id"];
 type ColorValueMode = typeof COLOR_VALUE_MODES[number]["id"];
 type ColorWheelControl = "hue" | "disc";
@@ -287,6 +296,12 @@ interface StrokeColorChange {
 	nextColor: string;
 }
 
+interface StrokeStyleChange {
+	strokeId: string;
+	previousStyle: CanvasStrokeStyle;
+	nextStyle: CanvasStrokeStyle;
+}
+
 interface StrokeRenderOptions {
 	hasPressure?: boolean;
 	isStart?: boolean;
@@ -298,6 +313,7 @@ type DrawingHistoryAction =
 	| {type: "clear-strokes"; strokes: CanvasStroke[]}
 	| {type: "delete-strokes"; strokes: CanvasStroke[]; indices: number[]}
 	| {type: "recolor-strokes"; changes: StrokeColorChange[]}
+	| {type: "restyle-strokes"; changes: StrokeStyleChange[]}
 	| {type: "move-stroke"; strokeId: string; delta: StrokePoint}
 	| {type: "move-strokes"; strokeIds: string[]; delta: StrokePoint}
 	| {type: "resize-strokes"; strokeIds: string[]; origin: StrokePoint; scale: number}
@@ -482,7 +498,9 @@ export class DrawingLayer {
 	private colorPaletteTriggerEl: HTMLElement | null = null;
 	private strokeSettingsPaletteTriggerEl: HTMLElement | null = null;
 	private selectedStrokeColorButtonEl: HTMLButtonElement | null = null;
+	private selectedStrokeSettingsButtonEl: HTMLButtonElement | null = null;
 	private colorPaletteTarget: ColorPaletteTarget = "brush";
+	private strokeSettingsPaletteTarget: StrokeSettingsPaletteTarget = "brush";
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
 	private colorPaletteTab: ColorPaletteTab = "disc";
 	private colorWheelHsv = getColorWheelHsv(DEFAULT_CUSTOM_COLOR);
@@ -514,6 +532,7 @@ export class DrawingLayer {
 	private readonly selectionHandleEls: SVGRectElement[] = [];
 	private strokeScaleMenuContainerEl: HTMLElement | null = null;
 	private pendingSelectedStrokeRecolorChanges: StrokeColorChange[] | null = null;
+	private pendingSelectedStrokeStyleChanges: StrokeStyleChange[] | null = null;
 	private dragState: StrokeDragState | null = null;
 	private resizeState: StrokeResizeState | null = null;
 	private nativeSelectionDragState: NativeSelectionDragState | null = null;
@@ -581,7 +600,9 @@ export class DrawingLayer {
 	}
 
 	async start(): Promise<void> {
-		this.drawingData = await loadCanvasDrawingData(this.app, this.target.file);
+		const loadResult = await loadCanvasDrawingDataWithMetadata(this.app, this.target.file, this.settings);
+		this.drawingData = loadResult.data;
+		this.hasPendingSave = loadResult.didBackfillStrokeHandwriting;
 		this.rebuildStrokeIndex();
 		this.mountRenderLayer();
 		this.injectToolbarButton();
@@ -1140,13 +1161,13 @@ export class DrawingLayer {
 		this.openColorPalette(target);
 	}
 
-	private toggleStrokeSettingsPalette(): void {
-		if (this.strokeSettingsPaletteEl?.isConnected) {
+	private toggleStrokeSettingsPalette(target: StrokeSettingsPaletteTarget = "brush"): void {
+		if (this.strokeSettingsPaletteEl?.isConnected && this.strokeSettingsPaletteTarget === target) {
 			this.closeStrokeSettingsPalette();
 			return;
 		}
 
-		this.openStrokeSettingsPalette();
+		this.openStrokeSettingsPalette(target);
 	}
 
 	private openColorPalette(target: ColorPaletteTarget = "brush"): void {
@@ -1274,14 +1295,24 @@ export class DrawingLayer {
 		this.positionBrushPopover(this.colorPaletteEl, anchorEl);
 	}
 
-	private openStrokeSettingsPalette(): void {
-		if (!this.isDrawingEnabled()) {
+	private openStrokeSettingsPalette(target: StrokeSettingsPaletteTarget = "brush"): void {
+		if (target === "brush" && !this.isDrawingEnabled()) {
 			this.enableDrawingMode();
 		}
 
-		const triggerEl = this.getStrokeSettingsPaletteTriggerEl();
+		if (target === "selection" && this.selectedStrokeIds.size === 0) {
+			return;
+		}
+
+		if (this.strokeSettingsPaletteEl?.isConnected && this.strokeSettingsPaletteTarget !== target) {
+			this.closeStrokeSettingsPalette();
+		}
+
+		this.strokeSettingsPaletteTarget = target;
+		const triggerEl = this.getStrokeSettingsPaletteTriggerEl(target);
 
 		if (!triggerEl) {
+			this.strokeSettingsPaletteTarget = "brush";
 			return;
 		}
 
@@ -1297,6 +1328,7 @@ export class DrawingLayer {
 		}
 
 		this.closeStrokeSettingsPalette();
+		this.strokeSettingsPaletteTarget = target;
 		this.strokeSettingsPaletteTriggerEl = triggerEl;
 
 		const paletteEl = document.createElement("div");
@@ -1306,7 +1338,7 @@ export class DrawingLayer {
 		const paletteLabelEl = document.createElement("span");
 		paletteLabelEl.id = createStrokeId();
 		paletteLabelEl.classList.add("draw-in-canvas-visually-hidden");
-		paletteLabelEl.textContent = "Stroke and handwriting settings";
+		paletteLabelEl.textContent = target === "selection" ? "Selected stroke settings" : "Stroke and handwriting settings";
 		paletteEl.setAttribute("aria-labelledby", paletteLabelEl.id);
 		paletteEl.appendChild(paletteLabelEl);
 		paletteEl.appendChild(this.createStrokeSettingsControlEl());
@@ -1326,16 +1358,24 @@ export class DrawingLayer {
 		window.requestAnimationFrame(() => firstControlEl?.focus({preventScroll: true}));
 	}
 
-	private getStrokeSettingsPaletteTriggerEl(): HTMLElement | null {
+	private getStrokeSettingsPaletteTriggerEl(target: StrokeSettingsPaletteTarget = this.strokeSettingsPaletteTarget): HTMLElement | null {
+		if (target === "selection") {
+			return this.selectedStrokeSettingsButtonEl?.isConnected ? this.selectedStrokeSettingsButtonEl : null;
+		}
+
 		return this.brushSettingsButtonEl?.isConnected ? this.brushSettingsButtonEl : null;
 	}
 
 	private getStrokeSettingsPaletteAnchorEl(): HTMLElement | null {
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			return this.getStrokeSettingsPaletteTriggerEl("selection");
+		}
+
 		if (this.brushControlsEl?.isConnected) {
 			return this.brushControlsEl;
 		}
 
-		return this.getStrokeSettingsPaletteTriggerEl();
+		return this.getStrokeSettingsPaletteTriggerEl("brush");
 	}
 
 	private positionStrokeSettingsPalette(): void {
@@ -1402,6 +1442,7 @@ export class DrawingLayer {
 	}
 
 	private closeStrokeSettingsPalette(): void {
+		this.commitPendingSelectedStrokeStyleChanges();
 		this.closeBrushPreview();
 		for (const dispose of this.strokeSettingsPaletteDisposers.splice(0)) {
 			dispose();
@@ -1410,6 +1451,7 @@ export class DrawingLayer {
 		this.strokeSettingsPaletteEl?.remove();
 		this.strokeSettingsPaletteEl = null;
 		this.strokeSettingsPaletteTriggerEl = null;
+		this.strokeSettingsPaletteTarget = "brush";
 		this.syncPopoverOpenBodyClass();
 		this.syncStrokeSettingsPaletteExpandedState();
 	}
@@ -1436,8 +1478,13 @@ export class DrawingLayer {
 
 	private syncStrokeSettingsPaletteExpandedState(): void {
 		const isOpen = this.strokeSettingsPaletteEl?.isConnected ?? false;
-		this.brushSettingsButtonEl?.setAttribute("aria-expanded", isOpen.toString());
-		this.brushSettingsButtonEl?.setAttribute("aria-label", isOpen ? "Close stroke and handwriting settings" : "Open stroke and handwriting settings");
+		const isBrushSettingsOpen = isOpen && this.strokeSettingsPaletteTarget === "brush";
+		const isSelectionSettingsOpen = isOpen && this.strokeSettingsPaletteTarget === "selection";
+
+		this.brushSettingsButtonEl?.setAttribute("aria-expanded", isBrushSettingsOpen.toString());
+		this.brushSettingsButtonEl?.setAttribute("aria-label", isBrushSettingsOpen ? "Close stroke and handwriting settings" : "Open stroke and handwriting settings");
+		this.selectedStrokeSettingsButtonEl?.setAttribute("aria-expanded", isSelectionSettingsOpen.toString());
+		this.selectedStrokeSettingsButtonEl?.setAttribute("aria-label", isSelectionSettingsOpen ? "Close selected stroke settings" : "Change selected stroke settings");
 	}
 
 	private syncColorPaletteSelection(): void {
@@ -1522,26 +1569,46 @@ export class DrawingLayer {
 
 	private syncStrokeSettingsPaletteControls(): void {
 		const paletteEl = this.strokeSettingsPaletteEl;
+		const style = this.getStrokeSettingsPaletteStyle();
+
+		if (!style) {
+			return;
+		}
+
 		const handwritingToggleEl = paletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-handwriting-toggle-input");
 		const handwritingControlsEl = paletteEl?.querySelector<HTMLElement>(".draw-in-canvas-freehand-controls");
 
 		if (handwritingToggleEl) {
-			handwritingToggleEl.checked = this.settings.beautifulStrokes;
+			handwritingToggleEl.checked = style.handwriting.enabled;
 		}
 
-		handwritingControlsEl?.classList.toggle("is-disabled", !this.settings.beautifulStrokes);
-		handwritingControlsEl?.setAttribute("aria-disabled", (!this.settings.beautifulStrokes).toString());
+		handwritingControlsEl?.classList.toggle("is-disabled", !style.handwriting.enabled);
+		handwritingControlsEl?.setAttribute("aria-disabled", (!style.handwriting.enabled).toString());
 
+		this.syncPaletteSlider(
+			paletteEl,
+			".draw-in-canvas-stroke-width-slider-control",
+			".draw-in-canvas-stroke-width-slider-value",
+			normalizeStrokeWidth(style.width),
+			formatStrokeWidth,
+		);
 		this.syncPaletteSlider(
 			paletteEl,
 			".draw-in-canvas-stroke-hardness-slider",
 			".draw-in-canvas-stroke-hardness-value",
-			normalizeStrokeHardness(this.settings.strokeHardness),
+			normalizeStrokeHardness(style.hardness),
 			formatStrokeHardness,
+		);
+		this.syncPaletteSlider(
+			paletteEl,
+			".draw-in-canvas-stroke-opacity-slider",
+			".draw-in-canvas-stroke-opacity-value",
+			normalizeStrokeOpacity(style.opacity),
+			formatStrokeOpacity,
 		);
 
 		for (const setting of getFreehandSliderSettingKeys()) {
-			const value = normalizeFreehandSliderValue(setting, this.settings[setting]);
+			const value = getStrokeHandwritingSliderValue(style.handwriting, setting);
 			const selector = `[data-freehand-setting="${setting}"]`;
 
 			this.syncPaletteSlider(
@@ -1555,7 +1622,7 @@ export class DrawingLayer {
 			const sliderEl = paletteEl?.querySelector<HTMLInputElement>(selector);
 
 			if (sliderEl) {
-				sliderEl.disabled = !this.settings.beautifulStrokes;
+				sliderEl.disabled = !style.handwriting.enabled;
 			}
 		}
 	}
@@ -1997,6 +2064,31 @@ export class DrawingLayer {
 		return null;
 	}
 
+	private getStrokeSettingsPaletteStyle(): CanvasStrokeStyle | null {
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			return this.getSelectedStrokeStyle();
+		}
+
+		return {
+			width: this.settings.strokeWidth,
+			hardness: this.settings.strokeHardness,
+			opacity: this.settings.strokeOpacity,
+			handwriting: createStrokeHandwriting(this.settings),
+		};
+	}
+
+	private getSelectedStrokeStyle(): CanvasStrokeStyle | null {
+		for (const strokeId of this.selectedStrokeIds) {
+			const stroke = this.findStroke(strokeId);
+
+			if (stroke) {
+				return getStrokeStyle(stroke);
+			}
+		}
+
+		return null;
+	}
+
 	private recolorSelectedStrokes(color: string): void {
 		const strokeIds = Array.from(this.selectedStrokeIds);
 
@@ -2055,12 +2147,29 @@ export class DrawingLayer {
 			?? [];
 		this.pendingSelectedStrokeRecolorChanges = null;
 
+		if (changes.length > 0) {
+			this.pushHistory({
+				type: "recolor-strokes",
+				changes,
+			});
+			this.scheduleSave();
+		}
+
+		this.commitPendingSelectedStrokeStyleChanges();
+	}
+
+	private commitPendingSelectedStrokeStyleChanges(): void {
+		const changes = this.pendingSelectedStrokeStyleChanges
+			?.filter((change) => !areStrokeStylesEqual(change.previousStyle, change.nextStyle))
+			?? [];
+		this.pendingSelectedStrokeStyleChanges = null;
+
 		if (changes.length === 0) {
 			return;
 		}
 
 		this.pushHistory({
-			type: "recolor-strokes",
+			type: "restyle-strokes",
 			changes,
 		});
 		this.scheduleSave();
@@ -2502,15 +2611,49 @@ export class DrawingLayer {
 		const strokeSectionEl = document.createElement("div");
 		strokeSectionEl.classList.add("draw-in-canvas-palette-section");
 		strokeSectionEl.appendChild(this.createPaletteSectionTitleEl("Stroke"));
-		strokeSectionEl.appendChild(this.createStrokeHardnessSliderControlEl());
+		strokeSectionEl.append(
+			this.createStrokeWidthSliderControlEl(),
+			this.createStrokeHardnessSliderControlEl(),
+			this.createStrokeOpacitySliderControlEl(),
+		);
 		controlEl.appendChild(strokeSectionEl);
 		controlEl.appendChild(this.createHandwritingControlsEl());
 
 		return controlEl;
 	}
 
+	private createStrokeWidthSliderControlEl(): HTMLElement {
+		const inputId = createStrokeId();
+		const value = normalizeStrokeWidth(this.getStrokeSettingsPaletteStyle()?.width ?? this.settings.strokeWidth);
+		const sliderEl = document.createElement("input");
+		sliderEl.id = inputId;
+		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-width-slider-control");
+		sliderEl.type = "range";
+		sliderEl.min = STROKE_WIDTH_MIN.toString();
+		sliderEl.max = STROKE_WIDTH_MAX.toString();
+		sliderEl.step = STROKE_WIDTH_STEP.toString();
+		sliderEl.value = value.toString();
+		sliderEl.setAttribute("aria-label", "Stroke width");
+
+		this.strokeSettingsPaletteDisposers.push(
+			this.addListener(sliderEl, "keydown", this.handleStrokeWidthSliderKeyDown),
+			this.addListener(sliderEl, "input", this.handleStrokeWidthSliderInput),
+		);
+
+		const controlEl = createSliderControlEl(
+			inputId,
+			"Width",
+			"draw-in-canvas-stroke-width-value",
+			formatStrokeWidth(value),
+			sliderEl,
+		);
+		controlEl.querySelector("output")?.classList.add("draw-in-canvas-stroke-width-slider-value");
+		return controlEl;
+	}
+
 	private createStrokeHardnessSliderControlEl(): HTMLElement {
 		const inputId = createStrokeId();
+		const value = normalizeStrokeHardness(this.getStrokeSettingsPaletteStyle()?.hardness ?? this.settings.strokeHardness);
 		const sliderEl = document.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-hardness-slider");
@@ -2518,7 +2661,7 @@ export class DrawingLayer {
 		sliderEl.min = STROKE_HARDNESS_MIN.toString();
 		sliderEl.max = STROKE_HARDNESS_MAX.toString();
 		sliderEl.step = STROKE_HARDNESS_STEP.toString();
-		sliderEl.value = normalizeStrokeHardness(this.settings.strokeHardness).toString();
+		sliderEl.value = value.toString();
 		sliderEl.setAttribute("aria-label", "Stroke hardness");
 
 		this.strokeSettingsPaletteDisposers.push(
@@ -2530,16 +2673,46 @@ export class DrawingLayer {
 			inputId,
 			"Hardness",
 			"draw-in-canvas-stroke-width-value",
-			formatStrokeHardness(normalizeStrokeHardness(this.settings.strokeHardness)),
+			formatStrokeHardness(value),
 			sliderEl,
 		);
 		controlEl.querySelector("output")?.classList.add("draw-in-canvas-stroke-hardness-value");
 		return controlEl;
 	}
 
+	private createStrokeOpacitySliderControlEl(): HTMLElement {
+		const inputId = createStrokeId();
+		const value = normalizeStrokeOpacity(this.getStrokeSettingsPaletteStyle()?.opacity ?? this.settings.strokeOpacity);
+		const sliderEl = document.createElement("input");
+		sliderEl.id = inputId;
+		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-opacity-slider");
+		sliderEl.type = "range";
+		sliderEl.min = STROKE_OPACITY_MIN.toString();
+		sliderEl.max = STROKE_OPACITY_MAX.toString();
+		sliderEl.step = STROKE_OPACITY_STEP.toString();
+		sliderEl.value = value.toString();
+		sliderEl.setAttribute("aria-label", "Stroke opacity");
+
+		this.strokeSettingsPaletteDisposers.push(
+			this.addListener(sliderEl, "keydown", this.handleStrokeWidthSliderKeyDown),
+			this.addListener(sliderEl, "input", this.handleStrokeOpacitySliderInput),
+		);
+
+		const controlEl = createSliderControlEl(
+			inputId,
+			"Opacity",
+			"draw-in-canvas-stroke-width-value",
+			formatStrokeOpacity(value),
+			sliderEl,
+		);
+		controlEl.querySelector("output")?.classList.add("draw-in-canvas-stroke-opacity-value");
+		return controlEl;
+	}
+
 	private createHandwritingControlsEl(): HTMLElement {
 		const sectionEl = document.createElement("div");
 		const titleId = createStrokeId();
+		const handwriting = this.getStrokeSettingsPaletteStyle()?.handwriting ?? createStrokeHandwriting(this.settings);
 		sectionEl.classList.add("draw-in-canvas-palette-section", "draw-in-canvas-freehand-controls");
 		sectionEl.setAttribute("aria-labelledby", titleId);
 
@@ -2564,7 +2737,7 @@ export class DrawingLayer {
 		const toggleEl = document.createElement("input");
 		toggleEl.classList.add("draw-in-canvas-handwriting-toggle-input");
 		toggleEl.type = "checkbox";
-		toggleEl.checked = this.settings.beautifulStrokes;
+		toggleEl.checked = handwriting.enabled;
 		toggleEl.setAttribute("aria-label", "Enable handwritten strokes");
 
 		const toggleTextEl = document.createElement("span");
@@ -2598,7 +2771,8 @@ export class DrawingLayer {
 	private createFreehandSliderControlEl(setting: FreehandSliderSetting): HTMLElement {
 		const slider = FREEHAND_SLIDER_SETTINGS[setting];
 		const inputId = createStrokeId();
-		const value = normalizeFreehandSliderValue(setting, this.settings[setting]);
+		const handwriting = this.getStrokeSettingsPaletteStyle()?.handwriting ?? createStrokeHandwriting(this.settings);
+		const value = getStrokeHandwritingSliderValue(handwriting, setting);
 		const sliderEl = document.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-freehand-slider");
@@ -2609,7 +2783,7 @@ export class DrawingLayer {
 		sliderEl.value = value.toString();
 		sliderEl.dataset.freehandSetting = setting;
 		sliderEl.setAttribute("aria-label", slider.ariaLabel);
-		sliderEl.disabled = !this.settings.beautifulStrokes;
+		sliderEl.disabled = !handwriting.enabled;
 
 		this.strokeSettingsPaletteDisposers.push(
 			this.addListener(sliderEl, "input", this.handleFreehandSliderInput),
@@ -2638,6 +2812,7 @@ export class DrawingLayer {
 		this.settings = {...this.settings, strokeWidth};
 		this.requestSetStrokeWidth(strokeWidth);
 		this.syncBrushControls();
+		this.syncStrokeSettingsPaletteControls();
 	}
 
 	private setStrokeHardness(hardness: number): void {
@@ -2662,6 +2837,7 @@ export class DrawingLayer {
 		this.settings = {...this.settings, strokeOpacity};
 		this.requestSetStrokeOpacity(strokeOpacity);
 		this.syncBrushControls();
+		this.syncStrokeSettingsPaletteControls();
 	}
 
 	private setFreehandSliderValue(setting: FreehandSliderSetting, value: number): void {
@@ -2702,6 +2878,135 @@ export class DrawingLayer {
 		this.settings = {...this.settings, beautifulStrokes: enabled};
 		this.requestSetBeautifulStrokes(enabled);
 		this.syncStrokeSettingsPaletteControls();
+	}
+
+	private setSelectedStrokeWidth(width: number): void {
+		const strokeWidth = normalizeStrokeWidth(width);
+		this.updateSelectedStrokeStyles((style) => ({...style, width: strokeWidth}));
+	}
+
+	private setSelectedStrokeHardness(hardness: number): void {
+		const strokeHardness = normalizeStrokeHardness(hardness);
+		this.updateSelectedStrokeStyles((style) => ({...style, hardness: strokeHardness}));
+	}
+
+	private setSelectedStrokeOpacity(opacity: number): void {
+		const strokeOpacity = normalizeStrokeOpacity(opacity);
+		this.updateSelectedStrokeStyles((style) => ({...style, opacity: strokeOpacity}));
+	}
+
+	private setSelectedStrokeFreehandSliderValue(setting: FreehandSliderSetting, value: number): void {
+		const nextValue = normalizeFreehandSliderValue(setting, value);
+		this.updateSelectedStrokeStyles((style) => ({
+			...style,
+			handwriting: getStrokeHandwritingWithSliderValue(style.handwriting, setting, nextValue),
+		}));
+	}
+
+	private resetSelectedStrokeFreehandSliderValues(): void {
+		this.updateSelectedStrokeStyles((style) => ({
+			...style,
+			handwriting: getDefaultStrokeHandwriting(style.handwriting.enabled),
+		}));
+	}
+
+	private setSelectedStrokeBeautifulStrokes(enabled: boolean): void {
+		this.updateSelectedStrokeStyles((style) => ({
+			...style,
+			handwriting: {...style.handwriting, enabled},
+		}));
+	}
+
+	private updateSelectedStrokeStyles(getNextStyle: (style: CanvasStrokeStyle) => CanvasStrokeStyle): void {
+		const strokeIds = this.getSelectedStrokeIds();
+
+		if (strokeIds.length === 0) {
+			this.closeStrokeSettingsPalette();
+			return;
+		}
+
+		const changesByStrokeId = new Map<string, StrokeStyleChange>();
+
+		for (const change of this.pendingSelectedStrokeStyleChanges ?? []) {
+			changesByStrokeId.set(change.strokeId, {
+				strokeId: change.strokeId,
+				previousStyle: cloneStrokeStyle(change.previousStyle),
+				nextStyle: cloneStrokeStyle(change.nextStyle),
+			});
+		}
+
+		let didApplyStyle = false;
+
+		for (const strokeId of strokeIds) {
+			const stroke = this.findStroke(strokeId);
+
+			if (!stroke) {
+				continue;
+			}
+
+			const currentStyle = getStrokeStyle(stroke);
+			const nextStyle = cloneStrokeStyle(getNextStyle(currentStyle));
+			const existingChange = changesByStrokeId.get(strokeId);
+			const previousStyle = existingChange ? cloneStrokeStyle(existingChange.previousStyle) : currentStyle;
+
+			if (areStrokeStylesEqual(currentStyle, nextStyle)) {
+				continue;
+			}
+
+			if (areStrokeStylesEqual(previousStyle, nextStyle)) {
+				changesByStrokeId.delete(strokeId);
+			} else {
+				changesByStrokeId.set(strokeId, {
+					strokeId,
+					previousStyle,
+					nextStyle: cloneStrokeStyle(nextStyle),
+				});
+			}
+
+			if (this.applyStrokeStyle(stroke, nextStyle)) {
+				didApplyStyle = true;
+			}
+		}
+
+		this.pendingSelectedStrokeStyleChanges = Array.from(changesByStrokeId.values())
+			.filter((change) => !areStrokeStylesEqual(change.previousStyle, change.nextStyle));
+
+		if (!didApplyStyle && this.pendingSelectedStrokeStyleChanges.length === 0) {
+			return;
+		}
+
+		this.syncStrokeSettingsPaletteControls();
+		this.renderSelectionBox();
+		this.positionStrokeSettingsPalette();
+		this.scheduleSave();
+	}
+
+	private applyStrokeStyle(stroke: CanvasStroke, style: CanvasStrokeStyle): boolean {
+		const nextStyle = cloneStrokeStyle(style);
+
+		if (areStrokeStylesEqual(getStrokeStyle(stroke), nextStyle)) {
+			return false;
+		}
+
+		const previousBounds = this.strokeBoundsById.get(stroke.id) ?? this.setStrokeBounds(stroke);
+		const previousWidth = stroke.width;
+		this.strokePathCache.invalidateStroke(stroke.id);
+		setStrokeStyle(stroke, nextStyle);
+
+		const nextBounds = this.setStrokeBounds(stroke);
+
+		if (nextBounds) {
+			this.strokeSpatialIndex.updateBounds(stroke.id, getStrokeSpatialIndexBounds(nextBounds, stroke.width));
+		} else {
+			this.strokeSpatialIndex.remove(stroke.id);
+		}
+
+		this.invalidateRasterTilesForStrokeGeometries([
+			{bounds: previousBounds, strokeWidth: previousWidth},
+			{bounds: nextBounds, strokeWidth: stroke.width},
+		]);
+		this.updateStrokeElement(stroke);
+		return true;
 	}
 
 	private openBrushPreview(event: PointerEvent, triggerEl: HTMLElement, setting: BrushSliderSetting): void {
@@ -4406,12 +4711,14 @@ private hasPendingRasterTileWork(): boolean {
 
 
 	private shouldUseHandwrittenStrokePath(stroke: CanvasStroke, hasPressure = strokeHasPressure(stroke)): boolean {
-		return this.settings.beautifulStrokes || hasPressure;
+		return getStrokeHandwriting(stroke, this.settings).enabled || hasPressure;
 	}
 
 	private getStrokeCenterPath(stroke: CanvasStroke, useCache = true): string {
+		const handwriting = getStrokeHandwriting(stroke, this.settings);
+
 		if (!useCache) {
-			return pointsToSvgPath(stroke.points, {smooth: this.settings.beautifulStrokes});
+			return pointsToSvgPath(stroke.points, {smooth: handwriting.enabled});
 		}
 
 		const pathCacheKey = createStrokePathCacheKey(stroke, {
@@ -4422,7 +4729,7 @@ private hasPendingRasterTileWork(): boolean {
 		return this.strokePathCache.getPathData(
 			stroke.id,
 			pathCacheKey,
-			() => pointsToSvgPath(stroke.points, {smooth: this.settings.beautifulStrokes}),
+			() => pointsToSvgPath(stroke.points, {smooth: handwriting.enabled}),
 		);
 	}
 
@@ -4462,19 +4769,20 @@ private hasPendingRasterTileWork(): boolean {
 		isStart: boolean,
 		isEnd: boolean,
 	): string {
+		const handwriting = getStrokeHandwriting(stroke, this.settings);
 		const outlinePoints = getStroke(stroke.points, {
 			size: stroke.width,
-			thinning: this.settings.strokeThinning,
-			streamline: this.settings.strokeStreamline,
-			smoothing: this.settings.strokeSmoothing,
+			thinning: handwriting.thinning,
+			streamline: handwriting.streamline,
+			smoothing: handwriting.smoothing,
 			simulatePressure: !hasPressure,
 			start: {
-				cap: isStart && this.settings.strokeTaperStart === 0,
-				taper: isStart ? this.settings.strokeTaperStart : 0,
+				cap: isStart && handwriting.taperStart === 0,
+				taper: isStart ? handwriting.taperStart : 0,
 			},
 			end: {
-				cap: isEnd && this.settings.strokeTaperEnd === 0,
-				taper: isEnd ? this.settings.strokeTaperEnd : 0,
+				cap: isEnd && handwriting.taperEnd === 0,
+				taper: isEnd ? handwriting.taperEnd : 0,
 			},
 			last: isComplete && isEnd,
 		});
@@ -4511,6 +4819,7 @@ private hasPendingRasterTileWork(): boolean {
 			width: this.settings.strokeWidth,
 			hardness: this.settings.strokeHardness,
 			opacity: this.settings.strokeOpacity,
+			handwriting: createStrokeHandwriting(this.settings),
 			points: [point],
 			createdAt: Date.now(),
 		};
@@ -5818,7 +6127,7 @@ private hasPendingRasterTileWork(): boolean {
 	private readonly handleBrushSettingsButtonClick = (event: MouseEvent): void => {
 		event.preventDefault();
 		event.stopPropagation();
-		this.toggleStrokeSettingsPalette();
+		this.toggleStrokeSettingsPalette("brush");
 	};
 
 	private updateBrushSliderFromPointer(sliderEl: HTMLElement, event: PointerEvent): void {
@@ -5862,6 +6171,12 @@ private hasPendingRasterTileWork(): boolean {
 		}
 
 		const strokeWidth = Number(event.currentTarget.value);
+
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			this.setSelectedStrokeWidth(strokeWidth);
+			return;
+		}
+
 		this.setStrokeWidth(strokeWidth);
 		this.updateBrushPreview("size");
 	};
@@ -5873,6 +6188,11 @@ private hasPendingRasterTileWork(): boolean {
 			return;
 		}
 
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			this.setSelectedStrokeHardness(Number(event.currentTarget.value));
+			return;
+		}
+
 		this.setStrokeHardness(Number(event.currentTarget.value));
 	};
 
@@ -5880,6 +6200,11 @@ private hasPendingRasterTileWork(): boolean {
 		event.stopPropagation();
 
 		if (!(event.currentTarget instanceof HTMLInputElement)) {
+			return;
+		}
+
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			this.setSelectedStrokeOpacity(Number(event.currentTarget.value));
 			return;
 		}
 
@@ -5900,6 +6225,11 @@ private hasPendingRasterTileWork(): boolean {
 			return;
 		}
 
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			this.setSelectedStrokeFreehandSliderValue(setting, Number(event.currentTarget.value));
+			return;
+		}
+
 		this.setFreehandSliderValue(setting, Number(event.currentTarget.value));
 	};
 
@@ -5910,12 +6240,22 @@ private hasPendingRasterTileWork(): boolean {
 			return;
 		}
 
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			this.setSelectedStrokeBeautifulStrokes(event.currentTarget.checked);
+			return;
+		}
+
 		this.setBeautifulStrokes(event.currentTarget.checked);
 	};
 
 	private readonly handleFreehandResetClick = (event: MouseEvent): void => {
 		event.preventDefault();
 		event.stopPropagation();
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			this.resetSelectedStrokeFreehandSliderValues();
+			return;
+		}
+
 		this.resetFreehandSliderValues();
 	};
 
@@ -6620,17 +6960,23 @@ private hasPendingRasterTileWork(): boolean {
 		this.syncVisibleStrokeElements();
 		this.renderSelectionBox();
 
-		if (this.colorPaletteTarget !== "selection") {
-			return;
+		if (this.colorPaletteTarget === "selection") {
+			if (this.selectedStrokeIds.size === 0) {
+				this.closeColorPalette();
+			} else {
+				this.syncColorPaletteSelection();
+				this.positionColorPalette();
+			}
 		}
 
-		if (this.selectedStrokeIds.size === 0) {
-			this.closeColorPalette();
-			return;
+		if (this.strokeSettingsPaletteTarget === "selection") {
+			if (this.selectedStrokeIds.size === 0) {
+				this.closeStrokeSettingsPalette();
+			} else {
+				this.syncStrokeSettingsPaletteControls();
+				this.positionStrokeSettingsPalette();
+			}
 		}
-
-		this.syncColorPaletteSelection();
-		this.positionColorPalette();
 	}
 
 	private getSelectedStrokeIds(): string[] {
@@ -6778,10 +7124,12 @@ private hasPendingRasterTileWork(): boolean {
 			this.createStrokeScaleButtonEl("shrink"),
 			this.createSelectedStrokeLayerMenuEl(),
 			this.createSelectedStrokeColorButtonEl(),
+			this.createSelectedStrokeSettingsButtonEl(),
 			this.createSelectedStrokeDeleteButtonEl(),
 		);
 		containerEl.appendChild(menuEl);
 		this.syncColorPaletteExpandedState();
+		this.syncStrokeSettingsPaletteExpandedState();
 
 		return containerEl;
 	}
@@ -6863,6 +7211,26 @@ private hasPendingRasterTileWork(): boolean {
 		this.strokeScaleMenuDisposers.push(
 			this.addListener(buttonEl, "pointerdown", this.handleStrokeScaleButtonPointerDown),
 			this.addListener(buttonEl, "click", this.handleSelectedStrokeColorButtonClick),
+		);
+
+		return buttonEl;
+	}
+
+	private createSelectedStrokeSettingsButtonEl(): HTMLButtonElement {
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-stroke-settings-button");
+		buttonEl.setAttribute("aria-label", "Change selected stroke settings");
+		buttonEl.setAttribute("aria-haspopup", "dialog");
+		buttonEl.setAttribute("aria-expanded", "false");
+		buttonEl.setAttribute("data-tooltip-position", "top");
+		setIcon(buttonEl, "sliders-horizontal");
+		this.selectedStrokeSettingsButtonEl = buttonEl;
+		this.syncStrokeSettingsPaletteExpandedState();
+
+		this.strokeScaleMenuDisposers.push(
+			this.addListener(buttonEl, "pointerdown", this.handleStrokeScaleButtonPointerDown),
+			this.addListener(buttonEl, "click", this.handleSelectedStrokeSettingsButtonClick),
 		);
 
 		return buttonEl;
@@ -6972,6 +7340,8 @@ private hasPendingRasterTileWork(): boolean {
 
 		this.strokeScaleMenuContainerEl?.remove();
 		this.strokeScaleMenuContainerEl = null;
+		this.selectedStrokeColorButtonEl = null;
+		this.selectedStrokeSettingsButtonEl = null;
 	}
 
 	private readonly handleStrokeScaleButtonPointerDown = (event: PointerEvent): void => {
@@ -6988,6 +7358,7 @@ private hasPendingRasterTileWork(): boolean {
 			return;
 		}
 
+		this.commitPendingSelectedStrokeRecolor();
 		this.scaleSelectedStrokes(direction === "grow" ? 1.25 : 0.8);
 	}
 
@@ -7005,6 +7376,12 @@ private hasPendingRasterTileWork(): boolean {
 		event.preventDefault();
 		event.stopPropagation();
 		this.toggleColorPalette("selection");
+	};
+
+	private readonly handleSelectedStrokeSettingsButtonClick = (event: MouseEvent): void => {
+		event.preventDefault();
+		event.stopPropagation();
+		this.toggleStrokeSettingsPalette("selection");
 	};
 
 	private readonly handleSelectedStrokeDeleteButtonClick = (event: MouseEvent): void => {
@@ -7328,6 +7705,24 @@ private hasPendingRasterTileWork(): boolean {
 				}
 
 				this.selectStrokes(recoloredStrokeIds);
+				break;
+			}
+
+			case "restyle-strokes": {
+				const restyledStrokeIds: string[] = [];
+
+				for (const change of action.changes) {
+					const stroke = this.findStroke(change.strokeId);
+
+					if (!stroke) {
+						continue;
+					}
+
+					this.applyStrokeStyle(stroke, direction === "undo" ? change.previousStyle : change.nextStyle);
+					restyledStrokeIds.push(change.strokeId);
+				}
+
+				this.selectStrokes(restyledStrokeIds);
 				break;
 			}
 
@@ -8041,13 +8436,9 @@ function replaceFinalSvgCoordinatePair(pathData: string | null, point: StrokePoi
 	return didReplace ? nextPathData : null;
 }
 
-function shouldRerenderForSettingsChange(previousSettings: DrawInCanvasSettings, nextSettings: DrawInCanvasSettings): boolean {
-	return previousSettings.beautifulStrokes !== nextSettings.beautifulStrokes
-		|| previousSettings.strokeThinning !== nextSettings.strokeThinning
-		|| previousSettings.strokeStreamline !== nextSettings.strokeStreamline
-		|| previousSettings.strokeSmoothing !== nextSettings.strokeSmoothing
-		|| previousSettings.strokeTaperStart !== nextSettings.strokeTaperStart
-		|| previousSettings.strokeTaperEnd !== nextSettings.strokeTaperEnd;
+function shouldRerenderForSettingsChange(_previousSettings: DrawInCanvasSettings, _nextSettings: DrawInCanvasSettings): boolean {
+	// Handwriting settings are captured per stroke, so brush changes should only affect future strokes.
+	return false;
 }
 
 function getFreehandSliderSettingKeys(): FreehandSliderSetting[] {
@@ -8065,6 +8456,67 @@ function getFreehandSliderSetting(value: string | undefined): FreehandSliderSett
 function formatFreehandSliderValue(setting: FreehandSliderSetting, value: number): string {
 	const slider = FREEHAND_SLIDER_SETTINGS[setting];
 	return slider.step < 1 ? value.toFixed(2) : Math.round(value).toString();
+}
+
+function getStrokeHandwritingSliderValue(handwriting: CanvasStrokeStyle["handwriting"], setting: FreehandSliderSetting): number {
+	switch (setting) {
+		case "strokeThinning":
+			return normalizeFreehandSliderValue(setting, handwriting.thinning);
+
+		case "strokeStreamline":
+			return normalizeFreehandSliderValue(setting, handwriting.streamline);
+
+		case "strokeSmoothing":
+			return normalizeFreehandSliderValue(setting, handwriting.smoothing);
+
+		case "strokeTaperStart":
+			return normalizeFreehandSliderValue(setting, handwriting.taperStart);
+
+		case "strokeTaperEnd":
+			return normalizeFreehandSliderValue(setting, handwriting.taperEnd);
+
+		default:
+			return assertNever(setting);
+	}
+}
+
+function getStrokeHandwritingWithSliderValue(
+	handwriting: CanvasStrokeStyle["handwriting"],
+	setting: FreehandSliderSetting,
+	value: number,
+): CanvasStrokeStyle["handwriting"] {
+	const nextValue = normalizeFreehandSliderValue(setting, value);
+
+	switch (setting) {
+		case "strokeThinning":
+			return {...handwriting, thinning: nextValue};
+
+		case "strokeStreamline":
+			return {...handwriting, streamline: nextValue};
+
+		case "strokeSmoothing":
+			return {...handwriting, smoothing: nextValue};
+
+		case "strokeTaperStart":
+			return {...handwriting, taperStart: nextValue};
+
+		case "strokeTaperEnd":
+			return {...handwriting, taperEnd: nextValue};
+
+		default:
+			return assertNever(setting);
+	}
+}
+
+function getDefaultStrokeHandwriting(enabled: boolean): CanvasStrokeStyle["handwriting"] {
+	return {
+		enabled,
+		thinning: FREEHAND_SLIDER_SETTINGS.strokeThinning.defaultValue,
+		streamline: FREEHAND_SLIDER_SETTINGS.strokeStreamline.defaultValue,
+		smoothing: FREEHAND_SLIDER_SETTINGS.strokeSmoothing.defaultValue,
+		taperStart: FREEHAND_SLIDER_SETTINGS.strokeTaperStart.defaultValue,
+		taperEnd: FREEHAND_SLIDER_SETTINGS.strokeTaperEnd.defaultValue,
+	};
 }
 
 function getBrushSliderSetting(value: string | undefined): BrushSliderSetting | null {
@@ -9840,6 +10292,7 @@ function clonePoints(points: readonly StrokePoint[]): StrokePoint[] {
 function cloneStroke(stroke: CanvasStroke): CanvasStroke {
 	return {
 		...stroke,
+		handwriting: {...stroke.handwriting},
 		points: clonePoints(stroke.points),
 	};
 }
@@ -9854,6 +10307,18 @@ function cloneStrokeColorChange(change: StrokeColorChange): StrokeColorChange {
 
 function cloneStrokeColorChanges(changes: readonly StrokeColorChange[]): StrokeColorChange[] {
 	return changes.map(cloneStrokeColorChange);
+}
+
+function cloneStrokeStyleChange(change: StrokeStyleChange): StrokeStyleChange {
+	return {
+		strokeId: change.strokeId,
+		previousStyle: cloneStrokeStyle(change.previousStyle),
+		nextStyle: cloneStrokeStyle(change.nextStyle),
+	};
+}
+
+function cloneStrokeStyleChanges(changes: readonly StrokeStyleChange[]): StrokeStyleChange[] {
+	return changes.map(cloneStrokeStyleChange);
 }
 
 function cloneHistoryAction(action: DrawingHistoryAction): DrawingHistoryAction {
@@ -9881,6 +10346,9 @@ function cloneHistoryAction(action: DrawingHistoryAction): DrawingHistoryAction 
 
 		case "recolor-strokes":
 			return {type: "recolor-strokes", changes: cloneStrokeColorChanges(action.changes)};
+
+		case "restyle-strokes":
+			return {type: "restyle-strokes", changes: cloneStrokeStyleChanges(action.changes)};
 
 		case "move-stroke":
 			return {

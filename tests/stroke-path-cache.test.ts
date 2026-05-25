@@ -24,6 +24,15 @@ const SETTINGS: DrawInCanvasSettings = {
 	allowTinyCanvasElements: false,
 };
 
+const HANDWRITING = {
+	enabled: true,
+	thinning: 0.2,
+	smoothing: 0.3,
+	streamline: 0.4,
+	taperStart: 6,
+	taperEnd: 12,
+};
+
 function stroke(overrides: Partial<CanvasStroke> = {}): CanvasStroke {
 	return {
 		id: "stroke-a",
@@ -36,6 +45,7 @@ function stroke(overrides: Partial<CanvasStroke> = {}): CanvasStroke {
 			{x: 10, y: 5, pressure: 0.4},
 		],
 		createdAt: 1,
+		handwriting: HANDWRITING,
 		...overrides,
 	};
 }
@@ -103,7 +113,7 @@ void test("evicts oldest path data and raster paths independently without hit-ti
 	assert.deepEqual(cache.getRasterPath("a", "a|r1", () => ({id: "a2"})), {id: "a2"});
 });
 
-void test("path cache key changes when geometry or freehand settings change", () => {
+void test("path cache key keeps handwritten stroke style independent of current settings", () => {
 	const baseStroke = stroke();
 	const baseKey = createStrokePathCacheKey(baseStroke, {
 		kind: "handwritten",
@@ -121,9 +131,19 @@ void test("path cache key changes when geometry or freehand settings change", ()
 		isStart: true,
 		isEnd: true,
 	});
-	const settingKey = createStrokePathCacheKey(baseStroke, {
+	const currentSettingKey = createStrokePathCacheKey(baseStroke, {
 		kind: "handwritten",
-		settings: {...SETTINGS, strokeSmoothing: 0.9},
+		settings: {...SETTINGS, strokeSmoothing: 0.9, strokeThinning: -0.5, strokeTaperStart: 24},
+		isComplete: true,
+		hasPressure: true,
+		isStart: true,
+		isEnd: true,
+	});
+	const strokeSettingKey = createStrokePathCacheKey(stroke({
+		handwriting: {...HANDWRITING, smoothing: 0.9},
+	}), {
+		kind: "handwritten",
+		settings: SETTINGS,
 		isComplete: true,
 		hasPressure: true,
 		isStart: true,
@@ -131,7 +151,8 @@ void test("path cache key changes when geometry or freehand settings change", ()
 	});
 
 	assert.notEqual(baseKey, movedKey);
-	assert.notEqual(baseKey, settingKey);
+	assert.equal(baseKey, currentSettingKey);
+	assert.notEqual(baseKey, strokeSettingKey);
 });
 
 void test("documents benchmarked cache size caps", () => {

@@ -1,11 +1,20 @@
 export const DRAWING_DATA_KEY = "drawInCanvas" as const;
-export const DRAWING_DATA_VERSION = 1 as const;
+export const DRAWING_DATA_VERSION = 2 as const;
 export const COLOR_HISTORY_LIMIT = 10 as const;
 
 export interface StrokePoint {
 	x: number;
 	y: number;
 	pressure?: number;
+}
+
+export interface CanvasStrokeHandwriting {
+	enabled: boolean;
+	thinning: number;
+	streamline: number;
+	smoothing: number;
+	taperStart: number;
+	taperEnd: number;
 }
 
 export interface CanvasStroke {
@@ -15,6 +24,7 @@ export interface CanvasStroke {
 	hardness: number;
 	opacity: number;
 	points: StrokePoint[];
+	handwriting: CanvasStrokeHandwriting;
 	createdAt: number;
 }
 

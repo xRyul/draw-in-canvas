@@ -1,5 +1,10 @@
 import {App, TFile} from "obsidian";
-import {normalizeStrokeHardness, normalizeStrokeOpacity} from "./settings";
+import {normalizeStrokeHardness, normalizeStrokeOpacity} from "./settings.ts";
+import {
+	isStrokeHandwriting,
+	normalizeStrokeHandwriting,
+	type StrokeHandwritingSettingsSource,
+} from "./stroke-handwriting.ts";
 import {
 	CanvasDrawingData,
 	CanvasStroke,
@@ -11,16 +16,38 @@ import {
 	normalizeStrokePressure,
 	createEmptyDrawingData,
 	createStrokeId,
-} from "./types";
+} from "./types.ts";
 
-export async function loadCanvasDrawingData(app: App, file: TFile): Promise<CanvasDrawingData> {
+export interface LoadedCanvasDrawingData {
+	data: CanvasDrawingData;
+	didBackfillStrokeHandwriting: boolean;
+}
+
+interface CanvasStrokeNormalizationResult {
+	stroke: CanvasStroke;
+	didBackfillStrokeHandwriting: boolean;
+}
+
+export async function loadCanvasDrawingData(
+	app: App,
+	file: TFile,
+	handwritingFallbackSettings?: StrokeHandwritingSettingsSource,
+): Promise<CanvasDrawingData> {
+	return (await loadCanvasDrawingDataWithMetadata(app, file, handwritingFallbackSettings)).data;
+}
+
+export async function loadCanvasDrawingDataWithMetadata(
+	app: App,
+	file: TFile,
+	handwritingFallbackSettings?: StrokeHandwritingSettingsSource,
+): Promise<LoadedCanvasDrawingData> {
 	const canvasDocument = await readJsonCanvasDocument(app, file);
-	return normalizeDrawingData(canvasDocument[DRAWING_DATA_KEY]);
+	return normalizeDrawingData(canvasDocument[DRAWING_DATA_KEY], handwritingFallbackSettings);
 }
 
 export async function saveCanvasDrawingData(app: App, file: TFile, drawingData: CanvasDrawingData): Promise<void> {
 	const canvasDocument = await readJsonCanvasDocument(app, file);
-	canvasDocument[DRAWING_DATA_KEY] = normalizeDrawingData(drawingData);
+	canvasDocument[DRAWING_DATA_KEY] = normalizeDrawingData(drawingData).data;
 	await writeJsonCanvasDocument(app, file, canvasDocument);
 }
 
@@ -30,19 +57,31 @@ export async function clearCanvasDrawingData(app: App, file: TFile): Promise<voi
 	await writeJsonCanvasDocument(app, file, canvasDocument);
 }
 
-function normalizeDrawingData(value: unknown): CanvasDrawingData {
+function normalizeDrawingData(
+	value: unknown,
+	handwritingFallbackSettings?: StrokeHandwritingSettingsSource,
+): LoadedCanvasDrawingData {
 	if (!isRecord(value)) {
-		return createEmptyDrawingData();
+		return {
+			data: createEmptyDrawingData(),
+			didBackfillStrokeHandwriting: false,
+		};
 	}
 
 	const rawStrokes = Array.isArray(value.strokes) ? value.strokes : [];
-	const strokes = rawStrokes.map(toCanvasStroke).filter(isPresent);
+	const strokeResults = rawStrokes
+		.map((rawStroke) => toCanvasStroke(rawStroke, handwritingFallbackSettings))
+		.filter(isPresent);
+	const strokes = strokeResults.map((result) => result.stroke);
 	const colorHistory = toColorHistory(value.colorHistory);
 
 	return {
-		version: DRAWING_DATA_VERSION,
-		strokes,
-		colorHistory,
+		data: {
+			version: DRAWING_DATA_VERSION,
+			strokes,
+			colorHistory,
+		},
+		didBackfillStrokeHandwriting: strokeResults.some((result) => result.didBackfillStrokeHandwriting),
 	};
 }
 
@@ -85,7 +124,10 @@ function normalizeColorHistoryColor(value: string): string | null {
 	return `#${hexValue.toLowerCase()}`;
 }
 
-function toCanvasStroke(value: unknown): CanvasStroke | null {
+function toCanvasStroke(
+	value: unknown,
+	handwritingFallbackSettings?: StrokeHandwritingSettingsSource,
+): CanvasStrokeNormalizationResult | null {
 	if (!isRecord(value)) {
 		return null;
 	}
@@ -98,13 +140,17 @@ function toCanvasStroke(value: unknown): CanvasStroke | null {
 	}
 
 	return {
-		id: typeof value.id === "string" && value.id.length > 0 ? value.id : createStrokeId(),
-		color: typeof value.color === "string" && value.color.length > 0 ? value.color : "#ff5a5f",
-		width: toPositiveNumber(value.width, 4),
-		hardness: normalizeStrokeHardness(value.hardness),
-		opacity: normalizeStrokeOpacity(value.opacity),
-		points,
-		createdAt: toPositiveNumber(value.createdAt, Date.now()),
+		stroke: {
+			id: typeof value.id === "string" && value.id.length > 0 ? value.id : createStrokeId(),
+			color: typeof value.color === "string" && value.color.length > 0 ? value.color : "#ff5a5f",
+			width: toPositiveNumber(value.width, 4),
+			hardness: normalizeStrokeHardness(value.hardness),
+			opacity: normalizeStrokeOpacity(value.opacity),
+			handwriting: normalizeStrokeHandwriting(value.handwriting, handwritingFallbackSettings),
+			points,
+			createdAt: toPositiveNumber(value.createdAt, Date.now()),
+		},
+		didBackfillStrokeHandwriting: !isStrokeHandwriting(value.handwriting),
 	};
 }
 
