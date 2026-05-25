@@ -1106,16 +1106,12 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	padding-top: 2px;
 }
 
-.draw-in-canvas-stroke-width-header {
-	display: contents;
+.draw-in-canvas-stroke-width-label {
+	grid-column: 1 / -1;
+	grid-row: 1;
 	font-size: var(--font-ui-smaller);
 	line-height: 1.2;
 	color: var(--text-muted);
-}
-
-.draw-in-canvas-stroke-width-header label {
-	grid-column: 1 / -1;
-	grid-row: 1;
 }
 
 .draw-in-canvas-stroke-width-value {

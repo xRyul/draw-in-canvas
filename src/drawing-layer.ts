@@ -8653,11 +8653,9 @@ function createSliderControlEl(
 	const controlEl = activeDocument.createElement("div");
 	controlEl.classList.add("draw-in-canvas-stroke-slider-control");
 
-	const headerEl = activeDocument.createElement("div");
-	headerEl.classList.add("draw-in-canvas-stroke-width-header");
-
 	const labelEl = activeDocument.createElement("label");
 	labelEl.htmlFor = inputId;
+	labelEl.classList.add("draw-in-canvas-stroke-width-label");
 	labelEl.textContent = label;
 
 	const valueEl = activeDocument.createElement("output");
@@ -8666,8 +8664,7 @@ function createSliderControlEl(
 	valueEl.setAttribute("aria-live", "polite");
 	valueEl.textContent = valueText;
 
-	headerEl.append(labelEl, valueEl);
-	controlEl.append(headerEl, sliderEl);
+	controlEl.append(labelEl, sliderEl, valueEl);
 	return controlEl;
 }
 
