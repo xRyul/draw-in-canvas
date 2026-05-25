@@ -1,6 +1,15 @@
 import {setIcon} from "obsidian";
 import type {CanvasTarget} from "./canvas-target";
 import {
+	NativeCanvasContentScaleSync,
+	applyNodeContentScale,
+	getNextNodeContentScale,
+	setNodeContentScale,
+	shouldScaleNodeContent,
+	type CanvasContentScaleNode,
+	type CanvasContentScaleNodeData,
+} from "./canvas-content-scale";
+import {
 	getLayerActionAvailability,
 	hasLayerOrderChanged,
 	orderItemsByIds,
@@ -33,12 +42,6 @@ const NATIVE_LAYER_BUTTON_CONFIGS: Record<LayerAction, {label: string; icon: str
 	"bring-forward": {label: "Bring selected canvas item forward", icon: "arrow-up"},
 	"bring-to-front": {label: "Bring selected canvas item to front", icon: "arrow-up-to-line"},
 };
-const CONTENT_SCALE_DATA_KEY = "drawInCanvasScale";
-const CONTENT_SCALE_CLASS = "draw-in-canvas-scaled-node-content";
-const DEFAULT_CONTENT_SCALE = 1;
-const MIN_CONTENT_SCALE = 0.01;
-const MAX_CONTENT_SCALE = 100;
-const CONTENT_SCALE_EPSILON = 0.001;
 const ASPECT_RATIO_EPSILON = 0.0001;
 
 interface NativeCanvasBounds {
@@ -60,11 +63,7 @@ interface NativeCanvasRect {
 }
 type NativeCanvasResizePointerdown = (this: NativeCanvasNode, event: PointerEvent, resizeHandle: string) => void;
 
-interface NativeCanvasNodeData extends Partial<NativeCanvasRect> {
-	id?: string;
-	type?: string;
-	drawInCanvasScale?: number;
-}
+interface NativeCanvasNodeData extends CanvasContentScaleNodeData, Partial<NativeCanvasRect> {}
 
 interface NativeCanvasNodeResizePrototype {
 	onResizePointerdown?: NativeCanvasResizePointerdown;
@@ -77,9 +76,7 @@ interface AspectRatioResizePatch {
 	refCount: number;
 }
 
-interface NativeCanvasNode extends NativeCanvasRect {
-	id?: string;
-	nodeEl?: HTMLElement;
+interface NativeCanvasNode extends NativeCanvasRect, CanvasContentScaleNode {
 	aspectRatio?: number;
 	moveAndResize?: (rect: NativeCanvasRect) => void;
 	setData?: (data: NativeCanvasNodeData) => void;
@@ -110,6 +107,11 @@ type CanvasViewWithCanvas = CanvasTarget["view"] & {
 
 type ScaleDirection = "grow" | "shrink";
 
+interface ScaleSelectedCanvasNodesResult {
+	didScale: boolean;
+	contentScaleNodes: NativeCanvasNode[];
+}
+
 const aspectRatioResizePatches = new WeakMap<NativeCanvasNodeResizePrototype, AspectRatioResizePatch>();
 
 export class NativeCanvasElementScaleControls {
@@ -118,12 +120,13 @@ export class NativeCanvasElementScaleControls {
 	private layerMenuEl: HTMLElement | null = null;
 	private readonly buttonDisposers: Array<() => void> = [];
 	private readonly releaseResizePatches = new Map<NativeCanvasNodeResizePrototype, () => void>();
-	private hasSyncedContentScales = false;
-	private hasScaledContent = false;
-	private contentScaleCanvas: NativeCanvasInstance | null = null;
-	private hasContentScaleNodeMap = false;
+	private readonly contentScaleSync: NativeCanvasContentScaleSync;
+	private readonly target: CanvasTarget;
 
-	constructor(private readonly target: CanvasTarget) {}
+	constructor(target: CanvasTarget) {
+		this.target = target;
+		this.contentScaleSync = new NativeCanvasContentScaleSync(() => this.target.containerEl);
+	}
 
 	setEnabled(enabled: boolean): void {
 		this.enabled = enabled;
@@ -131,7 +134,7 @@ export class NativeCanvasElementScaleControls {
 		if (!enabled) {
 			this.removeControls();
 			this.releaseAspectRatioResizePatch();
-			this.syncContentScalesIfNeeded();
+			this.contentScaleSync.syncForCanvas(getNativeCanvas(this.target));
 			return;
 		}
 
@@ -144,20 +147,22 @@ export class NativeCanvasElementScaleControls {
 			return;
 		}
 
-		this.syncContentScalesIfNeeded();
+		this.contentScaleSync.syncForCanvas(getNativeCanvas(this.target));
 	}
 
-	sync(): void {
+	sync(options: {skipContentScaleSync?: boolean} = {}): void {
 		const canvas = getNativeCanvas(this.target);
 
 		if (!canvas) {
 			this.removeControls();
-			this.clearContentScales();
+			this.contentScaleSync.clear();
 			this.releaseAspectRatioResizePatch();
 			return;
 		}
 
-		this.syncContentScales(canvas);
+		if (!options.skipContentScaleSync) {
+			this.contentScaleSync.syncForCanvas(canvas);
+		}
 
 		if (!this.enabled) {
 			this.removeControls();
@@ -195,7 +200,7 @@ export class NativeCanvasElementScaleControls {
 		this.enabled = false;
 		this.removeControls();
 		this.releaseAspectRatioResizePatch();
-		this.clearContentScales();
+		this.contentScaleSync.clear();
 	}
 
 	getOwnedElements(): Element[] {
@@ -317,77 +322,6 @@ export class NativeCanvasElementScaleControls {
 		return this.target.containerEl.querySelector<HTMLElement>(".canvas-menu:not(.draw-in-canvas-stroke-scale-menu):not(.draw-in-canvas-layer-submenu)");
 	}
 
-	private syncContentScales(canvas = getNativeCanvas(this.target)): void {
-		if (!canvas?.nodes) {
-			this.clearContentScales();
-			this.contentScaleCanvas = canvas ?? null;
-			this.hasContentScaleNodeMap = false;
-			return;
-		}
-
-		const activeContentEls = new Set<HTMLElement>();
-		let hasScaledContent = false;
-
-		for (const node of canvas.nodes.values()) {
-			const shouldScaleContent = shouldScaleNodeContent(node);
-			const scale = shouldScaleContent ? getNodeContentScale(node) : DEFAULT_CONTENT_SCALE;
-			const shouldApplyScale = shouldScaleContent && !isDefaultContentScale(scale);
-			const contentEl = getNodeContentEl(node);
-
-			if (shouldApplyScale) {
-				hasScaledContent = true;
-			}
-
-			if (!contentEl) {
-				continue;
-			}
-
-			if (!shouldApplyScale) {
-				clearContentScaleStyles(contentEl);
-				continue;
-			}
-
-			applyContentScaleStyles(contentEl, scale);
-			activeContentEls.add(contentEl);
-		}
-
-		for (const contentEl of Array.from(this.target.containerEl.querySelectorAll<HTMLElement>(`.${CONTENT_SCALE_CLASS}`))) {
-			if (!activeContentEls.has(contentEl)) {
-				clearContentScaleStyles(contentEl);
-			}
-		}
-
-		this.hasSyncedContentScales = true;
-		this.hasScaledContent = hasScaledContent;
-		this.contentScaleCanvas = canvas;
-		this.hasContentScaleNodeMap = true;
-	}
-
-	private syncContentScalesIfNeeded(): void {
-		const canvas = getNativeCanvas(this.target);
-
-		if (canvas !== this.contentScaleCanvas || (Boolean(canvas?.nodes) && !this.hasContentScaleNodeMap)) {
-			this.syncContentScales(canvas);
-			return;
-		}
-
-		if (this.hasSyncedContentScales && !this.hasScaledContent) {
-			return;
-		}
-
-		this.syncContentScales(canvas);
-	}
-
-	private clearContentScales(): void {
-		for (const contentEl of Array.from(this.target.containerEl.querySelectorAll<HTMLElement>(`.${CONTENT_SCALE_CLASS}`))) {
-			clearContentScaleStyles(contentEl);
-		}
-
-		this.hasSyncedContentScales = true;
-		this.hasScaledContent = false;
-		this.contentScaleCanvas = null;
-		this.hasContentScaleNodeMap = false;
-	}
 
 	private syncAspectRatioResizePatch(canvas: NativeCanvasInstance): void {
 		const resizePrototypes = new Set(getNativeCanvasNodeResizePrototypes(canvas));
@@ -432,16 +366,18 @@ export class NativeCanvasElementScaleControls {
 
 		const scale = direction === "grow" ? CANVAS_ELEMENT_SCALE_STEP : 1 / CANVAS_ELEMENT_SCALE_STEP;
 
-		if (!scaleSelectedCanvasNodes(canvas, scale)) {
+		const scaleResult = scaleSelectedCanvasNodes(canvas, scale);
+
+		if (!scaleResult.didScale) {
 			this.sync();
 			return;
 		}
 
-		this.syncContentScales(canvas);
+		this.contentScaleSync.syncChangedNodes(canvas, scaleResult.contentScaleNodes);
 		canvas.requestSave?.(true);
 		canvas.menu?.render?.(true);
 		canvas.requestFrame?.();
-		this.sync();
+		this.sync({skipContentScaleSync: true});
 	}
 
 	private handleLayerMenuButtonClick(event: MouseEvent, wrapperEl: HTMLElement, buttonEl: HTMLButtonElement): void {
@@ -740,16 +676,17 @@ function getCanvasNodeZIndex(node: NativeCanvasNode): number {
 	return isFiniteNumber(node.zIndex) ? node.zIndex : 0;
 }
 
-function scaleSelectedCanvasNodes(canvas: NativeCanvasInstance, scale: number): boolean {
+function scaleSelectedCanvasNodes(canvas: NativeCanvasInstance, scale: number): ScaleSelectedCanvasNodesResult {
 	const nodes = getSelectedResizableNodes(canvas);
 	const bounds = getCombinedBounds(nodes);
 
 	if (!bounds) {
-		return false;
+		return {didScale: false, contentScaleNodes: []};
 	}
 
 	const minDimension = getMinimumDimension(canvas);
 	const origin = getBoundsCenter(bounds);
+	const contentScaleNodes: NativeCanvasNode[] = [];
 	let didScale = false;
 
 	for (const node of nodes) {
@@ -777,10 +714,14 @@ function scaleSelectedCanvasNodes(canvas: NativeCanvasInstance, scale: number): 
 
 		if (applyNodeRect(node, nextRect, nextContentScale)) {
 			didScale = true;
+
+			if (shouldScaleNodeContent(node)) {
+				contentScaleNodes.push(node);
+			}
 		}
 	}
 
-	return didScale;
+	return {didScale, contentScaleNodes};
 }
 
 function getSelectedResizableNodes(canvas: NativeCanvasInstance): NativeCanvasNode[] {
@@ -863,88 +804,6 @@ function applyNodeRect(node: NativeCanvasNode, rect: NativeCanvasRect, contentSc
 	return false;
 }
 
-function getNextNodeContentScale(node: NativeCanvasNode, scale: number): number | null {
-	if (!shouldScaleNodeContent(node)) {
-		return null;
-	}
-
-	return roundContentScale(getNodeContentScale(node) * scale);
-}
-
-function shouldScaleNodeContent(node: NativeCanvasNode): boolean {
-	return node.getData?.().type === "text";
-}
-
-function getNodeContentScale(node: NativeCanvasNode): number {
-	const value = node.getData?.()[CONTENT_SCALE_DATA_KEY];
-
-	if (!isPositiveFiniteNumber(value)) {
-		return DEFAULT_CONTENT_SCALE;
-	}
-
-	return Math.min(MAX_CONTENT_SCALE, Math.max(MIN_CONTENT_SCALE, value));
-}
-
-function setNodeContentScale(data: NativeCanvasNodeData, scale: number | null): void {
-	if (scale === null || isDefaultContentScale(scale)) {
-		delete data.drawInCanvasScale;
-		return;
-	}
-
-	data.drawInCanvasScale = scale;
-}
-
-function applyNodeContentScale(node: NativeCanvasNode): void {
-	const contentEl = getNodeContentEl(node);
-
-	if (!contentEl) {
-		return;
-	}
-
-	const scale = getNodeContentScale(node);
-
-	if (isDefaultContentScale(scale)) {
-		clearContentScaleStyles(contentEl);
-		return;
-	}
-
-	applyContentScaleStyles(contentEl, scale);
-}
-
-function getNodeContentEl(node: NativeCanvasNode): HTMLElement | null {
-	return node.nodeEl?.querySelector<HTMLElement>(".canvas-node-content") ?? null;
-}
-
-function applyContentScaleStyles(contentEl: HTMLElement, scale: number): void {
-	contentEl.classList.add(CONTENT_SCALE_CLASS);
-	contentEl.setCssStyles({
-		transform: `scale(${scale})`,
-		transformOrigin: "top left",
-		width: `${100 / scale}%`,
-		height: `${100 / scale}%`,
-		flex: "0 0 auto",
-	});
-}
-
-function clearContentScaleStyles(contentEl: HTMLElement): void {
-	contentEl.classList.remove(CONTENT_SCALE_CLASS);
-	contentEl.setCssStyles({
-		transform: "",
-		transformOrigin: "",
-		width: "",
-		height: "",
-		flex: "",
-	});
-}
-
-function isDefaultContentScale(scale: number): boolean {
-	return Math.abs(scale - DEFAULT_CONTENT_SCALE) < CONTENT_SCALE_EPSILON;
-}
-
-function roundContentScale(value: number): number {
-	const clampedValue = Math.min(MAX_CONTENT_SCALE, Math.max(MIN_CONTENT_SCALE, value));
-	return Math.round(clampedValue * 1000) / 1000;
-}
 
 function getCombinedBounds(nodes: readonly NativeCanvasNode[]): NativeCanvasBounds | null {
 	let combinedBounds: NativeCanvasBounds | null = null;
