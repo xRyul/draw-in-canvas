@@ -41,6 +41,10 @@ import {
 	reorderIdsByLayerAction,
 	type LayerAction,
 } from "./layering";
+import {
+	getHandwrittenActiveStrokePreviewTailStartIndex,
+	getNextHandwrittenActiveStrokePreviewChunk,
+} from "./active-stroke-preview";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const MIN_POINT_DISTANCE = 1;
@@ -3339,17 +3343,50 @@ export class DrawingLayer {
 			return;
 		}
 
-		// The perfect-freehand outline is not segment-stable: splitting a live stroke into chunks
-		// creates artificial caps and slightly different outlines at chunk seams. Render the
-		// active handwritten stroke as one path so the preview stays visually continuous.
-		this.resetActiveStrokePreviewState();
-		this.updateVisibleStrokePathEl(this.activeStrokePathEl, stroke, false, {
+		this.flushHandwrittenActiveStrokePreviewChunks(stroke, hasPressure);
+
+		const tailStartIndex = getHandwrittenActiveStrokePreviewTailStartIndex(this.activeStrokePreviewCommittedPointIndex);
+		const tailStroke = getStrokePointSubset(stroke, tailStartIndex, stroke.points.length);
+		this.updateVisibleStrokePathEl(this.activeStrokePathEl, tailStroke, false, {
 			hasPressure,
-			isStart: true,
+			isStart: tailStartIndex === 0,
 			isEnd: true,
 		});
 		this.activeStrokePathEl.removeAttribute("opacity");
 	}
+
+	private flushHandwrittenActiveStrokePreviewChunks(stroke: CanvasStroke, hasPressure: boolean): void {
+		if (!this.activeStrokeGroupEl || !this.activeStrokePathEl) {
+			return;
+		}
+
+		let chunkPlan = getNextHandwrittenActiveStrokePreviewChunk(
+			stroke.points.length,
+			this.activeStrokePreviewCommittedPointIndex,
+		);
+
+		while (chunkPlan) {
+			const chunkStroke = getStrokePointSubset(stroke, chunkPlan.startIndex, chunkPlan.endIndex);
+			const chunkPathEl = document.createElementNS(SVG_NS, "path");
+			chunkPathEl.classList.add("draw-in-canvas-stroke");
+			this.updateVisibleStrokePathEl(chunkPathEl, chunkStroke, false, {
+				hasPressure,
+				isStart: chunkPlan.startIndex === 0,
+				isEnd: false,
+			});
+			chunkPathEl.removeAttribute("opacity");
+
+			this.activeStrokeGroupEl.insertBefore(chunkPathEl, this.activeStrokePathEl);
+			this.activeStrokePreviewChunkPathEls.push(chunkPathEl);
+			this.activeStrokePreviewCommittedPointIndex = chunkPlan.nextCommittedPointIndex;
+
+			chunkPlan = getNextHandwrittenActiveStrokePreviewChunk(
+				stroke.points.length,
+				this.activeStrokePreviewCommittedPointIndex,
+			);
+		}
+	}
+
 	private cancelActiveStrokePreviewUpdate(): void {
 		if (this.activeStrokePreviewFrameId === null) {
 			return;
