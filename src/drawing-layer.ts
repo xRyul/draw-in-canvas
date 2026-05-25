@@ -1584,7 +1584,6 @@ export class DrawingLayer {
 			swatchEl.dataset.color = color;
 			swatchEl.setAttribute("aria-label", `Use history color ${index + 1} ${formatHexColor(color)} stroke color`);
 			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color});
-			swatchEl.setCssStyles({backgroundColor: color, borderRadius: "0"});
 
 			const isSelected = colorsMatch(color, this.getColorPaletteStrokeColor());
 			swatchEl.classList.toggle("is-selected", isSelected);
@@ -1708,7 +1707,6 @@ export class DrawingLayer {
 			shadeEl.dataset.color = shade.value;
 			shadeEl.setAttribute("aria-label", `Use ${shade.name.toLowerCase()} ${formatHexColor(shade.value)} stroke color`);
 			shadeEl.setCssProps({"--draw-in-canvas-custom-shade-color": shade.value});
-			shadeEl.setCssStyles({backgroundColor: shade.value, borderRadius: "0"});
 			const isSelected = colorsMatch(shade.value, paletteColor);
 			shadeEl.classList.toggle("is-selected", isSelected);
 			shadeEl.setAttribute("aria-pressed", isSelected.toString());
@@ -2475,7 +2473,6 @@ export class DrawingLayer {
 			swatchEl.dataset.color = color.value;
 			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
 			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
-			swatchEl.setCssStyles({backgroundColor: color.value, borderRadius: "0"});
 
 			this.colorPaletteDisposers.push(
 				this.addListener(swatchEl, "pointerdown", this.handleColorSwatchPointerDown),
@@ -2507,7 +2504,6 @@ export class DrawingLayer {
 			swatchEl.dataset.color = color.value;
 			swatchEl.setAttribute("aria-label", `Use ${color.name.toLowerCase()} stroke color`);
 			swatchEl.setCssProps({"--draw-in-canvas-swatch-color": color.value});
-			swatchEl.setCssStyles({backgroundColor: color.value, borderRadius: "0"});
 
 			this.colorPaletteDisposers.push(
 				this.addListener(swatchEl, "pointerdown", this.handleColorSwatchPointerDown),

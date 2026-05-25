@@ -67,13 +67,8 @@
 	opacity: 1;
 }
 
-.draw-in-canvas-stale {
-	display: none !important;
-	pointer-events: none !important;
-}
-
 body.draw-in-canvas-color-palette-open .tooltip {
-	display: none !important;
+	display: none;
 }
 
 .draw-in-canvas-visually-hidden {
@@ -758,7 +753,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	appearance: none;
 	-webkit-appearance: none;
 	background-image: none;
-	background-color: var(--draw-in-canvas-swatch-color) !important;
+	background-color: var(--draw-in-canvas-swatch-color);
 	box-shadow: none;
 	cursor: pointer;
 }
@@ -809,12 +804,12 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	height: 20px;
 	padding: 0;
 	border: 1px solid var(--background-modifier-border);
-	border-radius: 0 !important;
+	border-radius: 0;
 	margin: 0;
 	appearance: none;
 	-webkit-appearance: none;
 	background-image: none;
-	background-color: var(--draw-in-canvas-swatch-color) !important;
+	background-color: var(--draw-in-canvas-swatch-color);
 	box-shadow: none;
 	cursor: pointer;
 }
@@ -829,7 +824,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 
 .draw-in-canvas-color-palette-swatch-grid .draw-in-canvas-color-swatch,
 .draw-in-canvas-color-palette-swatch-grid .draw-in-canvas-color-picker-swatch {
-	border-radius: 0 !important;
+	border-radius: 0;
 }
 
 
@@ -1273,7 +1268,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node .canvas-node-container {
-	border-width: 0 !important;
+	border-width: 0;
 	border-radius: min(var(--radius-m), 4%);
 	box-shadow:
 		inset 0 0 0 var(--draw-in-canvas-tiny-border-width, 1px) var(--background-modifier-border),
@@ -1324,7 +1319,7 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node:is(.is-selected, .is-focused) .canvas-node-container {
-	border-width: 0 !important;
+	border-width: 0;
 	box-shadow: 0 0 0 var(--draw-in-canvas-tiny-focus-spread, 2px) var(--color-accent);
 }
 
@@ -1573,4 +1568,9 @@ body.draw-in-canvas-color-palette-open .tooltip {
 .draw-in-canvas-selection-handle.mod-ne,
 .draw-in-canvas-selection-handle.mod-sw {
 	cursor: nesw-resize;
+}
+
+.draw-in-canvas-stale.draw-in-canvas-stale {
+	display: none;
+	pointer-events: none;
 }
