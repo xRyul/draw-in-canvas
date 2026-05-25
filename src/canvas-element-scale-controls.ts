@@ -10,6 +10,11 @@ import {
 	type CanvasContentScaleNodeData,
 } from "./canvas-content-scale";
 import {
+	getSelectedCanvasNodeResizePrototypes,
+	type CanvasNodeResizePrototype,
+	type CanvasResizePointerdown,
+} from "./canvas-resize-prototypes";
+import {
 	getLayerActionAvailability,
 	hasLayerOrderChanged,
 	orderItemsByIds,
@@ -61,13 +66,10 @@ interface NativeCanvasRect {
 	width: number;
 	height: number;
 }
-type NativeCanvasResizePointerdown = (this: NativeCanvasNode, event: PointerEvent, resizeHandle: string) => void;
+type NativeCanvasResizePointerdown = CanvasResizePointerdown<NativeCanvasNode>;
+type NativeCanvasNodeResizePrototype = CanvasNodeResizePrototype<NativeCanvasNode>;
 
 interface NativeCanvasNodeData extends CanvasContentScaleNodeData, Partial<NativeCanvasRect> {}
-
-interface NativeCanvasNodeResizePrototype {
-	onResizePointerdown?: NativeCanvasResizePointerdown;
-}
 
 interface AspectRatioResizePatch {
 	original: NativeCanvasResizePointerdown;
@@ -322,9 +324,8 @@ export class NativeCanvasElementScaleControls {
 		return this.target.containerEl.querySelector<HTMLElement>(".canvas-menu:not(.draw-in-canvas-stroke-scale-menu):not(.draw-in-canvas-layer-submenu)");
 	}
 
-
 	private syncAspectRatioResizePatch(canvas: NativeCanvasInstance): void {
-		const resizePrototypes = new Set(getNativeCanvasNodeResizePrototypes(canvas));
+		const resizePrototypes = new Set(getSelectedCanvasNodeResizePrototypes(canvas));
 
 		for (const [resizePrototype, releaseResizePatch] of this.releaseResizePatches) {
 			if (!resizePrototypes.has(resizePrototype)) {
@@ -580,36 +581,6 @@ function addTemporaryListener<T extends Event>(
 
 function getPointerEventWindow(event: PointerEvent): Window {
 	return (event as PointerEvent & {win?: Window}).win ?? event.view ?? window;
-}
-
-function getNativeCanvasNodeResizePrototypes(canvas: NativeCanvasInstance): NativeCanvasNodeResizePrototype[] {
-	const resizePrototypes = new Set<NativeCanvasNodeResizePrototype>();
-
-	for (const node of canvas.nodes?.values() ?? []) {
-		for (const resizePrototype of getNodeResizePointerdownPrototypes(node)) {
-			resizePrototypes.add(resizePrototype);
-		}
-	}
-
-	return Array.from(resizePrototypes);
-}
-
-function getNodeResizePointerdownPrototypes(node: NativeCanvasNode): NativeCanvasNodeResizePrototype[] {
-	const resizePrototypes: NativeCanvasNodeResizePrototype[] = [];
-	let prototype: object | null = Object.getPrototypeOf(node) as object | null;
-
-	while (prototype && prototype !== Object.prototype) {
-		const resizePrototype = prototype as NativeCanvasNodeResizePrototype;
-
-		if (Object.prototype.hasOwnProperty.call(resizePrototype, "onResizePointerdown")
-			&& typeof resizePrototype.onResizePointerdown === "function") {
-			resizePrototypes.push(resizePrototype);
-		}
-
-		prototype = Object.getPrototypeOf(prototype) as object | null;
-	}
-
-	return resizePrototypes;
 }
 
 function noop(): void {}
