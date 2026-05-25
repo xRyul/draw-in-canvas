@@ -213,7 +213,7 @@ export class NativeCanvasElementScaleControls {
 	}
 
 	private createScaleButton(direction: ScaleDirection): HTMLButtonElement {
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("clickable-icon", SCALE_BUTTON_CLASS);
 		buttonEl.classList.add(direction === "grow" ? SCALE_BUTTON_GROW_CLASS : SCALE_BUTTON_SHRINK_CLASS);
@@ -230,10 +230,10 @@ export class NativeCanvasElementScaleControls {
 	}
 
 	private createLayerMenuEl(canvas: NativeCanvasInstance): HTMLElement {
-		const wrapperEl = document.createElement("div");
+		const wrapperEl = activeDocument.createElement("div");
 		wrapperEl.classList.add(LAYER_MENU_CLASS, NATIVE_LAYER_MENU_CLASS);
 
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("clickable-icon", LAYER_MENU_BUTTON_CLASS);
 		buttonEl.setAttribute("aria-label", "Layer selected canvas item");
@@ -242,7 +242,7 @@ export class NativeCanvasElementScaleControls {
 		buttonEl.setAttribute("data-tooltip-position", "top");
 		setIcon(buttonEl, "layers");
 
-		const submenuEl = document.createElement("div");
+		const submenuEl = activeDocument.createElement("div");
 		submenuEl.classList.add("canvas-menu", "draw-in-canvas-layer-submenu");
 		submenuEl.setAttribute("role", "menu");
 		const layerActionAvailability = getCanvasLayerActionAvailability(canvas);
@@ -259,7 +259,7 @@ export class NativeCanvasElementScaleControls {
 
 	private createLayerActionButton(layerActionAvailability: LayerActionAvailability, action: LayerAction): HTMLButtonElement {
 		const buttonConfig = NATIVE_LAYER_BUTTON_CONFIGS[action];
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("clickable-icon", LAYER_SUBMENU_BUTTON_CLASS);
 		buttonEl.dataset.layerAction = action;

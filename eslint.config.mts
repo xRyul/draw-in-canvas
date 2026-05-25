@@ -23,6 +23,12 @@ export default tseslint.config(
 	},
 	...obsidianmd.configs.recommended,
 	{
+		files: ["package.json"],
+		rules: {
+			"obsidianmd/no-plugin-as-component": "off",
+		},
+	},
+	{
 		files: ["tests/**/*.ts"],
 		languageOptions: {
 			globals: {

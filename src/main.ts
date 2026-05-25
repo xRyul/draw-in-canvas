@@ -23,7 +23,7 @@ export default class DrawInCanvasPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
-		hideAllDrawInCanvasElements(document);
+		hideAllDrawInCanvasElements(activeDocument);
 
 		this.addCommand({
 			id: "toggle-drawing-mode",
@@ -74,7 +74,7 @@ export default class DrawInCanvasPlugin extends Plugin {
 
 	onunload(): void {
 		void this.stopActiveCanvasLayer();
-		hideAllDrawInCanvasElements(document);
+		hideAllDrawInCanvasElements(activeDocument);
 	}
 
 	async toggleDrawingMode(): Promise<void> {

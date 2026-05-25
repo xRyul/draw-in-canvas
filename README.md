@@ -37,6 +37,11 @@ Draw in Canvas adds a lightweight drawing layer to `.canvas` files while keeping
 - **Allow tiny canvas items**: Lowers Obsidian's native Canvas size limit, enables closer zoom, and adds quick scale/layer controls.
 
 
+## 📜 License
+
+MIT License - see [LICENSE](LICENSE).
+
+
 ## 🙏 Credits
 
 - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) for the handwritten stroke algorithm.

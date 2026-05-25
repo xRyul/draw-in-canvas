@@ -817,7 +817,7 @@ export class DrawingLayer {
 		const captureParentEl = this.findCanvasWrapperEl();
 		this.ensurePositioned(captureParentEl);
 
-		const captureEl = document.createElement("div");
+		const captureEl = activeDocument.createElement("div");
 		captureEl.classList.add("draw-in-canvas-capture-layer");
 		captureEl.tabIndex = 0;
 
@@ -844,7 +844,7 @@ export class DrawingLayer {
 		let shouldRender = false;
 
 		if (!svgEl) {
-			svgEl = document.createElementNS(SVG_NS, "svg");
+			svgEl = activeDocument.createElementNS(SVG_NS, "svg");
 			svgEl.classList.add("draw-in-canvas-render-layer");
 			svgEl.setAttribute("aria-hidden", "true");
 			svgEl.setAttribute("focusable", "false");
@@ -888,10 +888,10 @@ export class DrawingLayer {
 		this.removeToolbarButton();
 		this.ensureToolbarControlsAboveCaptureLayer(controlsEl);
 
-		const groupEl = document.createElement("div");
+		const groupEl = activeDocument.createElement("div");
 		groupEl.classList.add("canvas-control-group", "mod-raised", "draw-in-canvas-control-group");
 
-		const selectButtonEl = document.createElement("div");
+		const selectButtonEl = activeDocument.createElement("div");
 		selectButtonEl.classList.add("canvas-control-item", "draw-in-canvas-control-item", "draw-in-canvas-select-control-item");
 		selectButtonEl.setAttribute("aria-label", "Select canvas items (1)");
 		selectButtonEl.setAttribute("data-tooltip-position", "left");
@@ -900,7 +900,7 @@ export class DrawingLayer {
 		selectButtonEl.tabIndex = 0;
 		setIcon(selectButtonEl, "mouse-pointer-2");
 
-		const buttonEl = document.createElement("div");
+		const buttonEl = activeDocument.createElement("div");
 		buttonEl.classList.add("canvas-control-item", "draw-in-canvas-control-item", "draw-in-canvas-pencil-control-item");
 		buttonEl.setAttribute("aria-label", "Toggle drawing mode. Long press or press the down arrow for stroke color");
 		buttonEl.setAttribute("data-tooltip-position", "left");
@@ -1020,7 +1020,7 @@ export class DrawingLayer {
 
 		this.removeBrushControls();
 
-		const controlsEl = document.createElement("div");
+		const controlsEl = activeDocument.createElement("div");
 		controlsEl.classList.add("draw-in-canvas-brush-controls");
 		controlsEl.setAttribute("role", "group");
 		const colorButtonEl = this.createBrushColorButtonEl();
@@ -1074,7 +1074,7 @@ export class DrawingLayer {
 	}
 
 	private createBrushColorButtonEl(): HTMLButtonElement {
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("draw-in-canvas-brush-color-button");
 		buttonEl.setAttribute("aria-haspopup", "dialog");
@@ -1091,7 +1091,7 @@ export class DrawingLayer {
 	}
 
 	private createBrushSettingsButtonEl(): HTMLButtonElement {
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("draw-in-canvas-brush-settings-button");
 		buttonEl.setAttribute("aria-haspopup", "dialog");
@@ -1251,11 +1251,11 @@ export class DrawingLayer {
 		this.colorPaletteTarget = target;
 		this.colorPaletteTriggerEl = triggerEl;
 
-		const paletteEl = document.createElement("div");
+		const paletteEl = activeDocument.createElement("div");
 		paletteEl.classList.add("draw-in-canvas-color-palette");
 		paletteEl.setAttribute("role", "dialog");
 
-		const paletteLabelEl = document.createElement("span");
+		const paletteLabelEl = activeDocument.createElement("span");
 		paletteLabelEl.id = createStrokeId();
 		paletteLabelEl.classList.add("draw-in-canvas-visually-hidden");
 		paletteLabelEl.textContent = target === "selection" ? "Selected stroke color" : "Stroke color";
@@ -1267,7 +1267,7 @@ export class DrawingLayer {
 			palettes: createStrokeId(),
 		};
 		const swatchEls: HTMLButtonElement[] = [];
-		const panelsEl = document.createElement("div");
+		const panelsEl = activeDocument.createElement("div");
 		panelsEl.classList.add("draw-in-canvas-color-palette-panels");
 		panelsEl.append(
 			this.createColorDiscPanelEl(panelIds.disc),
@@ -1280,13 +1280,13 @@ export class DrawingLayer {
 			this.createColorPaletteTabsEl(panelIds),
 		);
 
-		document.body.appendChild(paletteEl);
+		activeDocument.body.appendChild(paletteEl);
 		this.colorPaletteEl = paletteEl;
 		this.syncPopoverOpenBodyClass();
 		this.syncColorPaletteExpandedState();
 		this.colorPaletteDisposers.push(
-			this.addListener(document, "pointerdown", this.handleBrushPopoverDocumentPointerDown, true),
-			this.addListener(document, "keydown", this.handleColorPaletteDocumentKeyDown, true),
+			this.addListener(activeDocument, "pointerdown", this.handleBrushPopoverDocumentPointerDown, true),
+			this.addListener(activeDocument, "keydown", this.handleColorPaletteDocumentKeyDown, true),
 		);
 		this.syncColorPaletteSelection();
 		this.syncColorPaletteTabControls();
@@ -1365,11 +1365,11 @@ export class DrawingLayer {
 		this.strokeSettingsPaletteTarget = target;
 		this.strokeSettingsPaletteTriggerEl = triggerEl;
 
-		const paletteEl = document.createElement("div");
+		const paletteEl = activeDocument.createElement("div");
 		paletteEl.classList.add("draw-in-canvas-stroke-settings-palette");
 		paletteEl.setAttribute("role", "dialog");
 
-		const paletteLabelEl = document.createElement("span");
+		const paletteLabelEl = activeDocument.createElement("span");
 		paletteLabelEl.id = createStrokeId();
 		paletteLabelEl.classList.add("draw-in-canvas-visually-hidden");
 		paletteLabelEl.textContent = target === "selection" ? "Selected stroke settings" : "Stroke and handwriting settings";
@@ -1377,14 +1377,14 @@ export class DrawingLayer {
 		paletteEl.appendChild(paletteLabelEl);
 		paletteEl.appendChild(this.createStrokeSettingsControlEl());
 
-		document.body.appendChild(paletteEl);
+		activeDocument.body.appendChild(paletteEl);
 		this.strokeSettingsPaletteEl = paletteEl;
 		this.syncPopoverOpenBodyClass();
 		this.positionStrokeSettingsPalette();
 		this.syncStrokeSettingsPaletteExpandedState();
 		this.strokeSettingsPaletteDisposers.push(
-			this.addListener(document, "pointerdown", this.handleBrushPopoverDocumentPointerDown, true),
-			this.addListener(document, "keydown", this.handleStrokeSettingsPaletteDocumentKeyDown, true),
+			this.addListener(activeDocument, "pointerdown", this.handleBrushPopoverDocumentPointerDown, true),
+			this.addListener(activeDocument, "keydown", this.handleStrokeSettingsPaletteDocumentKeyDown, true),
 		);
 		this.syncStrokeSettingsPaletteControls();
 
@@ -1487,7 +1487,7 @@ export class DrawingLayer {
 	}
 
 	private syncPopoverOpenBodyClass(): void {
-		document.body.classList.toggle(
+		activeDocument.body.classList.toggle(
 			BRUSH_POPOVER_OPEN_BODY_CLASS,
 			(this.colorPaletteEl?.isConnected ?? false) || (this.strokeSettingsPaletteEl?.isConnected ?? false),
 		);
@@ -1570,7 +1570,7 @@ export class DrawingLayer {
 		swatchesEl.setAttribute("aria-label", colors.length === 0 ? "Color history, empty" : "Color history");
 
 		if (colors.length === 0) {
-			const emptyEl = document.createElement("span");
+			const emptyEl = activeDocument.createElement("span");
 			emptyEl.classList.add("draw-in-canvas-color-history-empty");
 			emptyEl.textContent = "No colors yet";
 			swatchesEl.appendChild(emptyEl);
@@ -1578,7 +1578,7 @@ export class DrawingLayer {
 		}
 
 		for (const [index, color] of colors.entries()) {
-			const swatchEl = document.createElement("button");
+			const swatchEl = activeDocument.createElement("button");
 			swatchEl.type = "button";
 			swatchEl.classList.add("draw-in-canvas-color-disc-palette-swatch", "draw-in-canvas-history-color-swatch");
 			swatchEl.dataset.color = color;
@@ -1681,7 +1681,7 @@ export class DrawingLayer {
 		const colorPickerSwatchEl = this.colorPaletteEl?.querySelector<HTMLElement>(".draw-in-canvas-color-picker-swatch");
 		const shadeEls = this.colorPaletteEl?.querySelectorAll<HTMLButtonElement>(".draw-in-canvas-custom-color-shade") ?? [];
 
-		if (hexInputEl && document.activeElement !== hexInputEl) {
+		if (hexInputEl && activeDocument.activeElement !== hexInputEl) {
 			hexInputEl.value = formatHexColor(this.customColorHex);
 			setHexInputValidity(hexInputEl, true);
 		}
@@ -1759,7 +1759,7 @@ export class DrawingLayer {
 		const inputText = this.getColorValueInputText();
 		const hslInputEl = this.colorPaletteEl?.querySelector<HTMLInputElement>(".draw-in-canvas-hsl-value-input");
 
-		if (hslInputEl && (document.activeElement !== hslInputEl || hslInputEl.readOnly)) {
+		if (hslInputEl && (activeDocument.activeElement !== hslInputEl || hslInputEl.readOnly)) {
 			hslInputEl.value = inputText;
 			setHslInputValidity(hslInputEl, true);
 		}
@@ -1906,8 +1906,8 @@ export class DrawingLayer {
 		}
 
 		for (const labelEl of Array.from(labelEls)) {
-			if (labelEl instanceof HTMLInputElement) {
-				if (document.activeElement !== labelEl || labelEl.readOnly) {
+			if (labelEl.instanceOf(HTMLInputElement)) {
+				if (activeDocument.activeElement !== labelEl || labelEl.readOnly) {
 					labelEl.value = colorLabel;
 					setHexInputValidity(labelEl, true);
 				}
@@ -2218,22 +2218,22 @@ export class DrawingLayer {
 
 
 	private createColorPaletteHeaderEl(): HTMLElement {
-		const headerEl = document.createElement("div");
+		const headerEl = activeDocument.createElement("div");
 		headerEl.classList.add("draw-in-canvas-color-palette-header");
 
-		const titleEl = document.createElement("div");
+		const titleEl = activeDocument.createElement("div");
 		titleEl.classList.add("draw-in-canvas-color-palette-title");
 		titleEl.textContent = "Colors";
 
-		const currentColorEl = document.createElement("div");
+		const currentColorEl = activeDocument.createElement("div");
 		currentColorEl.classList.add("draw-in-canvas-current-color");
 		currentColorEl.setAttribute("aria-label", "Current stroke color");
 
-		const previewEl = document.createElement("span");
+		const previewEl = activeDocument.createElement("span");
 		previewEl.classList.add("draw-in-canvas-current-color-preview");
 		previewEl.setCssProps({"--draw-in-canvas-current-color": this.settings.strokeColor});
 
-		const labelEl = document.createElement("input");
+		const labelEl = activeDocument.createElement("input");
 		labelEl.classList.add("draw-in-canvas-current-color-label");
 		labelEl.type = "text";
 		labelEl.inputMode = "text";
@@ -2257,7 +2257,7 @@ export class DrawingLayer {
 			this.addListener(labelEl, "keydown", this.handleCurrentColorHexKeyDown),
 		);
 
-		const valuesEl = document.createElement("div");
+		const valuesEl = activeDocument.createElement("div");
 		valuesEl.classList.add("draw-in-canvas-current-color-values");
 		valuesEl.append(labelEl, this.createColorValueInputEl());
 
@@ -2268,7 +2268,7 @@ export class DrawingLayer {
 
 	private createColorValueInputEl(): HTMLInputElement {
 		const modeConfig = getColorValueModeConfig(this.colorValueMode);
-		const inputEl = document.createElement("input");
+		const inputEl = activeDocument.createElement("input");
 		inputEl.classList.add("draw-in-canvas-hsl-value-input", "draw-in-canvas-current-color-value-input");
 		inputEl.type = "text";
 		inputEl.inputMode = "text";
@@ -2296,17 +2296,17 @@ export class DrawingLayer {
 	}
 
 	private createColorDiscPanelEl(panelId: string): HTMLElement {
-		const panelEl = document.createElement("div");
+		const panelEl = activeDocument.createElement("div");
 		panelEl.id = panelId;
 		panelEl.classList.add("draw-in-canvas-color-palette-panel", "draw-in-canvas-color-disc-panel");
 		panelEl.dataset.colorPalettePanel = "disc";
 		panelEl.setAttribute("role", "tabpanel");
 
-		const wheelEl = document.createElement("div");
+		const wheelEl = activeDocument.createElement("div");
 		wheelEl.classList.add("draw-in-canvas-color-disc-picker");
 		wheelEl.setAttribute("aria-label", "Color disc");
 
-		const hueControlEl = document.createElement("div");
+		const hueControlEl = activeDocument.createElement("div");
 		hueControlEl.classList.add("draw-in-canvas-color-wheel-hue-control");
 		hueControlEl.dataset.colorWheelControl = "hue";
 		hueControlEl.tabIndex = 0;
@@ -2315,12 +2315,12 @@ export class DrawingLayer {
 		hueControlEl.setAttribute("aria-valuemin", "0");
 		hueControlEl.setAttribute("aria-valuemax", "360");
 
-		const hueThumbEl = document.createElement("span");
+		const hueThumbEl = activeDocument.createElement("span");
 		hueThumbEl.classList.add("draw-in-canvas-color-wheel-thumb", "draw-in-canvas-color-wheel-hue-thumb");
 		hueThumbEl.setAttribute("aria-hidden", "true");
 		hueControlEl.appendChild(hueThumbEl);
 
-		const discControlEl = document.createElement("div");
+		const discControlEl = activeDocument.createElement("div");
 		discControlEl.classList.add("draw-in-canvas-color-wheel-disc-field");
 		discControlEl.dataset.colorWheelControl = "disc";
 		discControlEl.tabIndex = 0;
@@ -2329,7 +2329,7 @@ export class DrawingLayer {
 		discControlEl.setAttribute("aria-valuemin", "0");
 		discControlEl.setAttribute("aria-valuemax", "100");
 
-		const discThumbEl = document.createElement("span");
+		const discThumbEl = activeDocument.createElement("span");
 		discThumbEl.classList.add("draw-in-canvas-color-wheel-thumb", "draw-in-canvas-color-wheel-disc-thumb");
 		discThumbEl.setAttribute("aria-hidden", "true");
 		discControlEl.appendChild(discThumbEl);
@@ -2356,19 +2356,19 @@ export class DrawingLayer {
 	}
 
 	private createHslSliderControlsEl(): HTMLElement {
-		const controlEl = document.createElement("div");
+		const controlEl = activeDocument.createElement("div");
 		controlEl.classList.add("draw-in-canvas-color-disc-palette", "draw-in-canvas-hsl-controls");
 
-		const headerEl = document.createElement("div");
+		const headerEl = activeDocument.createElement("div");
 		headerEl.classList.add("draw-in-canvas-hsl-header");
 
-		const modeGroupEl = document.createElement("div");
+		const modeGroupEl = activeDocument.createElement("div");
 		modeGroupEl.classList.add("draw-in-canvas-color-mode-segmented");
 		modeGroupEl.setAttribute("role", "group");
 		modeGroupEl.setAttribute("aria-label", "Color model");
 
 		for (const mode of COLOR_VALUE_MODES) {
-			const buttonEl = document.createElement("button");
+			const buttonEl = activeDocument.createElement("button");
 			const isActive = mode.id === this.colorValueMode;
 			buttonEl.classList.add("draw-in-canvas-color-mode-button");
 			buttonEl.type = "button";
@@ -2386,7 +2386,7 @@ export class DrawingLayer {
 
 		headerEl.appendChild(modeGroupEl);
 
-		const slidersEl = document.createElement("div");
+		const slidersEl = activeDocument.createElement("div");
 		slidersEl.classList.add("draw-in-canvas-hsl-slider-list");
 
 		for (const setting of getColorValueSliderConfigs(this.colorValueMode)) {
@@ -2400,7 +2400,7 @@ export class DrawingLayer {
 	private createHslSliderControlEl(setting: ColorValueSliderConfig): HTMLElement {
 		const inputId = createStrokeId();
 		const value = this.getColorValueSliderValue(setting.id);
-		const sliderEl = document.createElement("input");
+		const sliderEl = activeDocument.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-hsl-slider");
 		sliderEl.type = "range";
@@ -2436,14 +2436,14 @@ export class DrawingLayer {
 	}
 
 	private createColorHistorySectionEl(): HTMLElement {
-		const historyEl = document.createElement("div");
+		const historyEl = activeDocument.createElement("div");
 		historyEl.classList.add("draw-in-canvas-color-disc-palette", "draw-in-canvas-color-history");
 
-		const titleEl = document.createElement("div");
+		const titleEl = activeDocument.createElement("div");
 		titleEl.classList.add("draw-in-canvas-color-disc-palette-title");
 		titleEl.textContent = "History";
 
-		const swatchesEl = document.createElement("div");
+		const swatchesEl = activeDocument.createElement("div");
 		swatchesEl.classList.add("draw-in-canvas-color-disc-palette-swatches", "draw-in-canvas-color-history-swatches");
 
 		this.colorPaletteDisposers.push(
@@ -2457,19 +2457,19 @@ export class DrawingLayer {
 	}
 
 	private createColorDiscPaletteEl(): HTMLElement {
-		const paletteEl = document.createElement("div");
+		const paletteEl = activeDocument.createElement("div");
 		paletteEl.classList.add("draw-in-canvas-color-disc-palette");
 
-		const titleEl = document.createElement("div");
+		const titleEl = activeDocument.createElement("div");
 		titleEl.classList.add("draw-in-canvas-color-disc-palette-title");
 		titleEl.textContent = "Palette";
 
-		const swatchesEl = document.createElement("div");
+		const swatchesEl = activeDocument.createElement("div");
 		swatchesEl.classList.add("draw-in-canvas-color-disc-palette-swatches");
 		swatchesEl.setAttribute("aria-label", "Preset stroke colors");
 
 		for (const color of PRESET_STROKE_COLORS) {
-			const swatchEl = document.createElement("button");
+			const swatchEl = activeDocument.createElement("button");
 			swatchEl.type = "button";
 			swatchEl.classList.add("draw-in-canvas-color-disc-palette-swatch", "draw-in-canvas-preset-color-swatch");
 			swatchEl.dataset.color = color.value;
@@ -2490,18 +2490,18 @@ export class DrawingLayer {
 	}
 
 	private createPresetPalettePanelEl(panelId: string, swatchEls: HTMLButtonElement[]): HTMLElement {
-		const panelEl = document.createElement("div");
+		const panelEl = activeDocument.createElement("div");
 		panelEl.id = panelId;
 		panelEl.classList.add("draw-in-canvas-color-palette-panel", "draw-in-canvas-presets-panel");
 		panelEl.dataset.colorPalettePanel = "palettes";
 		panelEl.setAttribute("role", "tabpanel");
 
-		const swatchesEl = document.createElement("div");
+		const swatchesEl = activeDocument.createElement("div");
 		swatchesEl.classList.add("draw-in-canvas-color-palette-swatch-grid");
 		swatchesEl.setAttribute("aria-label", "Preset stroke colors");
 
 		for (const color of PRESET_STROKE_COLORS) {
-			const swatchEl = document.createElement("button");
+			const swatchEl = activeDocument.createElement("button");
 			swatchEl.type = "button";
 			swatchEl.classList.add("draw-in-canvas-color-swatch", "draw-in-canvas-preset-color-swatch");
 			swatchEl.dataset.color = color.value;
@@ -2523,13 +2523,13 @@ export class DrawingLayer {
 	}
 
 	private createColorPaletteTabsEl(panelIds: Record<ColorPaletteTab, string>): HTMLElement {
-		const tabsEl = document.createElement("div");
+		const tabsEl = activeDocument.createElement("div");
 		tabsEl.classList.add("draw-in-canvas-color-palette-tabs");
 		tabsEl.setAttribute("role", "tablist");
 		tabsEl.setAttribute("aria-label", "Color picker views");
 
 		for (const tab of COLOR_PALETTE_TABS) {
-			const tabEl = document.createElement("button");
+			const tabEl = activeDocument.createElement("button");
 			tabEl.type = "button";
 			tabEl.classList.add("draw-in-canvas-color-palette-tab");
 			tabEl.dataset.colorPaletteTab = tab.id;
@@ -2549,22 +2549,22 @@ export class DrawingLayer {
 	}
 
 	private createNativeColorPickerEl(): HTMLElement {
-		const pickerLabelEl = document.createElement("label");
+		const pickerLabelEl = activeDocument.createElement("label");
 		pickerLabelEl.classList.add("draw-in-canvas-color-swatch", "draw-in-canvas-color-picker-swatch");
 		pickerLabelEl.setAttribute("title", "Choose custom color");
 		pickerLabelEl.setCssProps({"--draw-in-canvas-swatch-color": this.customColorHex});
 
-		const pickerInputEl = document.createElement("input");
+		const pickerInputEl = activeDocument.createElement("input");
 		pickerInputEl.classList.add("draw-in-canvas-native-color-picker");
 		pickerInputEl.type = "color";
 		pickerInputEl.value = this.customColorHex;
 		pickerInputEl.setAttribute("aria-label", "Choose custom stroke color");
 
-		const iconEl = document.createElement("span");
+		const iconEl = activeDocument.createElement("span");
 		iconEl.classList.add("draw-in-canvas-color-picker-icon");
 		setIcon(iconEl, "palette");
 
-		const hiddenTextEl = document.createElement("span");
+		const hiddenTextEl = activeDocument.createElement("span");
 		hiddenTextEl.classList.add("draw-in-canvas-visually-hidden");
 		hiddenTextEl.textContent = "Choose custom stroke color";
 
@@ -2578,12 +2578,12 @@ export class DrawingLayer {
 	}
 
 	private createCustomColorShadesEl(ariaLabel: string): HTMLElement {
-		const shadesEl = document.createElement("div");
+		const shadesEl = activeDocument.createElement("div");
 		shadesEl.classList.add("draw-in-canvas-custom-color-shades");
 		shadesEl.setAttribute("aria-label", ariaLabel);
 
 		for (let index = 0; index < CUSTOM_COLOR_SHADE_COUNT; index++) {
-			const shadeEl = document.createElement("button");
+			const shadeEl = activeDocument.createElement("button");
 			shadeEl.type = "button";
 			shadeEl.classList.add("draw-in-canvas-custom-color-shade");
 			shadeEl.dataset.shadeIndex = index.toString();
@@ -2600,18 +2600,18 @@ export class DrawingLayer {
 	}
 
 	private createCustomColorControlEl(): HTMLElement {
-		const controlEl = document.createElement("div");
+		const controlEl = activeDocument.createElement("div");
 		controlEl.classList.add("draw-in-canvas-custom-color-control");
 
-		const fieldEl = document.createElement("div");
+		const fieldEl = activeDocument.createElement("div");
 		fieldEl.classList.add("draw-in-canvas-custom-color-field");
 
 		const inputId = createStrokeId();
-		const labelEl = document.createElement("label");
+		const labelEl = activeDocument.createElement("label");
 		labelEl.htmlFor = inputId;
 		labelEl.textContent = "Hex color";
 
-		const inputEl = document.createElement("input");
+		const inputEl = activeDocument.createElement("input");
 		inputEl.id = inputId;
 		inputEl.classList.add("draw-in-canvas-custom-color-hex-input");
 		inputEl.type = "text";
@@ -2642,10 +2642,10 @@ export class DrawingLayer {
 	}
 
 	private createStrokeSettingsControlEl(): HTMLElement {
-		const controlEl = document.createElement("div");
+		const controlEl = activeDocument.createElement("div");
 		controlEl.classList.add("draw-in-canvas-stroke-settings-control");
 
-		const strokeSectionEl = document.createElement("div");
+		const strokeSectionEl = activeDocument.createElement("div");
 		strokeSectionEl.classList.add("draw-in-canvas-palette-section");
 		strokeSectionEl.appendChild(this.createPaletteSectionTitleEl("Stroke"));
 		strokeSectionEl.append(
@@ -2662,7 +2662,7 @@ export class DrawingLayer {
 	private createStrokeWidthSliderControlEl(): HTMLElement {
 		const inputId = createStrokeId();
 		const value = normalizeStrokeWidth(this.getStrokeSettingsPaletteStyle()?.width ?? this.settings.strokeWidth);
-		const sliderEl = document.createElement("input");
+		const sliderEl = activeDocument.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-width-slider-control");
 		sliderEl.type = "range";
@@ -2691,7 +2691,7 @@ export class DrawingLayer {
 	private createStrokeHardnessSliderControlEl(): HTMLElement {
 		const inputId = createStrokeId();
 		const value = normalizeStrokeHardness(this.getStrokeSettingsPaletteStyle()?.hardness ?? this.settings.strokeHardness);
-		const sliderEl = document.createElement("input");
+		const sliderEl = activeDocument.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-hardness-slider");
 		sliderEl.type = "range";
@@ -2720,7 +2720,7 @@ export class DrawingLayer {
 	private createStrokeOpacitySliderControlEl(): HTMLElement {
 		const inputId = createStrokeId();
 		const value = normalizeStrokeOpacity(this.getStrokeSettingsPaletteStyle()?.opacity ?? this.settings.strokeOpacity);
-		const sliderEl = document.createElement("input");
+		const sliderEl = activeDocument.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-stroke-opacity-slider");
 		sliderEl.type = "range";
@@ -2747,37 +2747,37 @@ export class DrawingLayer {
 	}
 
 	private createHandwritingControlsEl(): HTMLElement {
-		const sectionEl = document.createElement("div");
+		const sectionEl = activeDocument.createElement("div");
 		const titleId = createStrokeId();
 		const handwriting = this.getStrokeSettingsPaletteStyle()?.handwriting ?? createStrokeHandwriting(this.settings);
 		sectionEl.classList.add("draw-in-canvas-palette-section", "draw-in-canvas-freehand-controls");
 		sectionEl.setAttribute("aria-labelledby", titleId);
 
-		const headerEl = document.createElement("div");
+		const headerEl = activeDocument.createElement("div");
 		headerEl.classList.add("draw-in-canvas-palette-section-header");
 
 		const titleEl = this.createPaletteSectionTitleEl("Handwriting");
 		titleEl.id = titleId;
 
-		const headerActionsEl = document.createElement("div");
+		const headerActionsEl = activeDocument.createElement("div");
 		headerActionsEl.classList.add("draw-in-canvas-palette-section-actions");
 
-		const resetButtonEl = document.createElement("button");
+		const resetButtonEl = activeDocument.createElement("button");
 		resetButtonEl.type = "button";
 		resetButtonEl.classList.add("draw-in-canvas-palette-reset-button");
 		resetButtonEl.textContent = "Reset";
 		resetButtonEl.setAttribute("aria-label", "Reset handwriting controls to defaults");
 
-		const toggleLabelEl = document.createElement("label");
+		const toggleLabelEl = activeDocument.createElement("label");
 		toggleLabelEl.classList.add("draw-in-canvas-handwriting-toggle");
 
-		const toggleEl = document.createElement("input");
+		const toggleEl = activeDocument.createElement("input");
 		toggleEl.classList.add("draw-in-canvas-handwriting-toggle-input");
 		toggleEl.type = "checkbox";
 		toggleEl.checked = handwriting.enabled;
 		toggleEl.setAttribute("aria-label", "Enable handwritten strokes");
 
-		const toggleTextEl = document.createElement("span");
+		const toggleTextEl = activeDocument.createElement("span");
 		toggleTextEl.textContent = "On";
 
 		toggleLabelEl.append(toggleEl, toggleTextEl);
@@ -2799,7 +2799,7 @@ export class DrawingLayer {
 	}
 
 	private createPaletteSectionTitleEl(text: string): HTMLElement {
-		const titleEl = document.createElement("div");
+		const titleEl = activeDocument.createElement("div");
 		titleEl.classList.add("draw-in-canvas-palette-section-title");
 		titleEl.textContent = text;
 		return titleEl;
@@ -2810,7 +2810,7 @@ export class DrawingLayer {
 		const inputId = createStrokeId();
 		const handwriting = this.getStrokeSettingsPaletteStyle()?.handwriting ?? createStrokeHandwriting(this.settings);
 		const value = getStrokeHandwritingSliderValue(handwriting, setting);
-		const sliderEl = document.createElement("input");
+		const sliderEl = activeDocument.createElement("input");
 		sliderEl.id = inputId;
 		sliderEl.classList.add("draw-in-canvas-stroke-width-slider", "draw-in-canvas-freehand-slider");
 		sliderEl.type = "range";
@@ -3059,9 +3059,9 @@ export class DrawingLayer {
 
 		trySetPointerCapture(triggerEl, event.pointerId);
 		this.brushPreviewDisposers.push(
-			this.addListener(document, "pointermove", this.handleBrushPreviewPointerMove, true),
-			this.addListener(document, "pointerup", this.handleBrushPreviewPointerUp, true),
-			this.addListener(document, "pointercancel", this.handleBrushPreviewPointerUp, true),
+			this.addListener(activeDocument, "pointermove", this.handleBrushPreviewPointerMove, true),
+			this.addListener(activeDocument, "pointerup", this.handleBrushPreviewPointerUp, true),
+			this.addListener(activeDocument, "pointercancel", this.handleBrushPreviewPointerUp, true),
 			this.addListener(window, "blur", this.handleBrushPreviewWindowBlur),
 		);
 
@@ -3148,29 +3148,29 @@ export class DrawingLayer {
 			return this.brushPreviewEl;
 		}
 
-		const previewEl = document.createElement("div");
+		const previewEl = activeDocument.createElement("div");
 		previewEl.classList.add("draw-in-canvas-brush-preview");
 		previewEl.setAttribute("aria-hidden", "true");
 
-		const sampleEl = document.createElement("span");
+		const sampleEl = activeDocument.createElement("span");
 		sampleEl.classList.add("draw-in-canvas-brush-preview-sample");
 
-		const dotEl = document.createElement("span");
+		const dotEl = activeDocument.createElement("span");
 		dotEl.classList.add("draw-in-canvas-brush-preview-dot");
 		sampleEl.appendChild(dotEl);
 
-		const textEl = document.createElement("span");
+		const textEl = activeDocument.createElement("span");
 		textEl.classList.add("draw-in-canvas-brush-preview-text");
 
-		const valueEl = document.createElement("span");
+		const valueEl = activeDocument.createElement("span");
 		valueEl.classList.add("draw-in-canvas-brush-preview-value");
 
-		const detailEl = document.createElement("span");
+		const detailEl = activeDocument.createElement("span");
 		detailEl.classList.add("draw-in-canvas-brush-preview-detail");
 
 		textEl.append(valueEl, detailEl);
 		previewEl.append(sampleEl, textEl);
-		document.body.appendChild(previewEl);
+		activeDocument.body.appendChild(previewEl);
 		this.brushPreviewEl = previewEl;
 		return previewEl;
 	}
@@ -3255,8 +3255,8 @@ export class DrawingLayer {
 			this.addListener(strokeInteractionEl, "pointercancel", this.handleStrokePointerUp, true),
 			this.addListener(strokeInteractionEl, "pointerleave", this.handleStrokePointerLeave, true),
 			this.addListener(window, "keydown", this.handleWindowKeyDown, true),
-			this.addListener(document, "keydown", this.handleDocumentKeyDown, true),
-			this.addListener(document, "keyup", this.handleDocumentKeyUp, true),
+			this.addListener(activeDocument, "keydown", this.handleDocumentKeyDown, true),
+			this.addListener(activeDocument, "keyup", this.handleDocumentKeyUp, true),
 			this.addListener(window, "blur", this.handleWindowBlur),
 			this.addListener(window, "resize", this.handleWindowResize),
 		);
@@ -4106,7 +4106,7 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createStrokeSvgRenderFragment(renderItems: ReturnType<typeof getStrokeRenderItems>): DocumentFragment {
-		const fragment = document.createDocumentFragment();
+		const fragment = activeDocument.createDocumentFragment();
 
 		for (const item of renderItems) {
 			if (item.type === "single") {
@@ -4141,7 +4141,7 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createStrokeTiledRasterRenderFragment(request: TiledRasterRenderRequest): DocumentFragment {
-		const fragment = document.createDocumentFragment();
+		const fragment = activeDocument.createDocumentFragment();
 		const visibleTileKeys = new Set<string>();
 		const records: RasterTileCacheRecord[] = [];
 		const recordsNeedingSetup: RasterTileCacheRecord[] = [];
@@ -4269,8 +4269,8 @@ private hasPendingRasterTileWork(): boolean {
 		strokeIds: readonly string[],
 		isSetupComplete = true,
 	): RasterTileCacheRecord {
-		const foreignObjectEl = document.createElementNS(SVG_NS, "foreignObject");
-		const canvasEl = document.createElementNS(XHTML_NS, "canvas") as HTMLCanvasElement;
+		const foreignObjectEl = activeDocument.createElementNS(SVG_NS, "foreignObject");
+		const canvasEl = activeDocument.createElementNS(XHTML_NS, "canvas") as HTMLCanvasElement;
 		const width = Math.max(1, entry.bounds.maxX - entry.bounds.minX);
 		const height = Math.max(1, entry.bounds.maxY - entry.bounds.minY);
 		const rasterScale = this.getRasterBitmapScale();
@@ -4375,7 +4375,7 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createStrokeRasterRenderFragment(visibleStrokeIds: readonly string[], viewportBounds: StrokeBounds): DocumentFragment {
-		const fragment = document.createDocumentFragment();
+		const fragment = activeDocument.createDocumentFragment();
 		const rasterBounds = expandRasterRenderViewportBounds(viewportBounds, this.getCanvasScreenScale());
 		const renderPlan = getStrokeRasterRenderPlan(visibleStrokeIds.map((strokeId) => ({
 			id: strokeId,
@@ -4421,8 +4421,8 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createStrokeRasterForeignObjectEl(strokes: readonly CanvasStroke[], bounds: StrokeBounds): SVGForeignObjectElement {
-		const foreignObjectEl = document.createElementNS(SVG_NS, "foreignObject");
-		const canvasEl = document.createElementNS(XHTML_NS, "canvas") as HTMLCanvasElement;
+		const foreignObjectEl = activeDocument.createElementNS(SVG_NS, "foreignObject");
+		const canvasEl = activeDocument.createElementNS(XHTML_NS, "canvas") as HTMLCanvasElement;
 		const width = Math.max(1, bounds.maxX - bounds.minX);
 		const height = Math.max(1, bounds.maxY - bounds.minY);
 		const rasterScale = this.getRasterBitmapScale();
@@ -4646,7 +4646,7 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createStrokeBatchPathEl(strokes: readonly CanvasStroke[]): SVGPathElement {
-		const pathEl = document.createElementNS(SVG_NS, "path");
+		const pathEl = activeDocument.createElementNS(SVG_NS, "path");
 		const firstStroke = strokes[0];
 
 		pathEl.classList.add("draw-in-canvas-stroke", "draw-in-canvas-stroke-batch");
@@ -4706,7 +4706,7 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createStrokeGroupEl(stroke: CanvasStroke): SVGGElement {
-		const groupEl = document.createElementNS(SVG_NS, "g");
+		const groupEl = activeDocument.createElementNS(SVG_NS, "g");
 		groupEl.classList.add("draw-in-canvas-stroke-wrapper");
 		groupEl.classList.toggle("is-selected", this.selectedStrokeIds.has(stroke.id));
 		groupEl.dataset.strokeId = stroke.id;
@@ -4718,7 +4718,7 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createPathEl(stroke: CanvasStroke, isComplete = true): SVGPathElement {
-		const pathEl = document.createElementNS(SVG_NS, "path");
+		const pathEl = activeDocument.createElementNS(SVG_NS, "path");
 		pathEl.classList.add("draw-in-canvas-stroke");
 		this.updateVisibleStrokePathEl(pathEl, stroke, isComplete);
 		return pathEl;
@@ -4876,7 +4876,7 @@ private hasPendingRasterTileWork(): boolean {
 			createdAt: Date.now(),
 		};
 
-		const strokeGroupEl = document.createElementNS(SVG_NS, "g");
+		const strokeGroupEl = activeDocument.createElementNS(SVG_NS, "g");
 		strokeGroupEl.classList.add("draw-in-canvas-active-stroke");
 		strokeGroupEl.setAttribute("pointer-events", "none");
 		strokeGroupEl.setAttribute("opacity", formatStrokeOpacityRatio(stroke.opacity));
@@ -4979,10 +4979,10 @@ private hasPendingRasterTileWork(): boolean {
 			return this.penCursorEl;
 		}
 
-		const cursorEl = document.createElement("div");
+		const cursorEl = activeDocument.createElement("div");
 		cursorEl.classList.add("draw-in-canvas-pen-cursor");
 		cursorEl.setAttribute("aria-hidden", "true");
-		document.body.appendChild(cursorEl);
+		activeDocument.body.appendChild(cursorEl);
 		this.penCursorEl = cursorEl;
 		this.penCursorAppearanceKey = "";
 		return cursorEl;
@@ -5162,7 +5162,7 @@ private hasPendingRasterTileWork(): boolean {
 			}
 
 			const chunkStroke = getStrokePointSubset(stroke, chunkStartIndex, chunkEndIndex);
-			const chunkPathEl = document.createElementNS(SVG_NS, "path");
+			const chunkPathEl = activeDocument.createElementNS(SVG_NS, "path");
 			chunkPathEl.classList.add("draw-in-canvas-stroke");
 			this.updateLinearStrokePathEl(chunkPathEl, chunkStroke);
 			chunkPathEl.removeAttribute("opacity");
@@ -5215,7 +5215,7 @@ private hasPendingRasterTileWork(): boolean {
 
 		while (chunkPlan) {
 			const chunkStroke = getStrokePointSubset(stroke, chunkPlan.startIndex, chunkPlan.endIndex);
-			const chunkPathEl = document.createElementNS(SVG_NS, "path");
+			const chunkPathEl = activeDocument.createElementNS(SVG_NS, "path");
 			chunkPathEl.classList.add("draw-in-canvas-stroke");
 			this.updateVisibleStrokePathEl(chunkPathEl, chunkStroke, false, {
 				hasPressure,
@@ -5684,7 +5684,7 @@ private hasPendingRasterTileWork(): boolean {
 		const inputEl = event.currentTarget;
 
 		window.requestAnimationFrame(() => {
-			if (document.activeElement === inputEl && !inputEl.readOnly) {
+			if (activeDocument.activeElement === inputEl && !inputEl.readOnly) {
 				inputEl.select();
 			}
 		});
@@ -5759,7 +5759,7 @@ private hasPendingRasterTileWork(): boolean {
 		inputEl.focus({preventScroll: true});
 
 		window.requestAnimationFrame(() => {
-			if (document.activeElement === inputEl && !inputEl.readOnly) {
+			if (activeDocument.activeElement === inputEl && !inputEl.readOnly) {
 				inputEl.select();
 			}
 		});
@@ -5846,7 +5846,7 @@ private hasPendingRasterTileWork(): boolean {
 		const inputEl = event.currentTarget;
 
 		window.requestAnimationFrame(() => {
-			if (document.activeElement === inputEl && !inputEl.readOnly) {
+			if (activeDocument.activeElement === inputEl && !inputEl.readOnly) {
 				inputEl.select();
 			}
 		});
@@ -5922,7 +5922,7 @@ private hasPendingRasterTileWork(): boolean {
 		inputEl.focus({preventScroll: true});
 
 		window.requestAnimationFrame(() => {
-			if (document.activeElement === inputEl && !inputEl.readOnly) {
+			if (activeDocument.activeElement === inputEl && !inputEl.readOnly) {
 				inputEl.select();
 			}
 		});
@@ -5990,7 +5990,7 @@ private hasPendingRasterTileWork(): boolean {
 		event.stopPropagation();
 
 		if (event.currentTarget instanceof HTMLInputElement) {
-			this.shouldSelectCustomColorHexOnClick = document.activeElement !== event.currentTarget;
+			this.shouldSelectCustomColorHexOnClick = activeDocument.activeElement !== event.currentTarget;
 		}
 	};
 
@@ -6015,7 +6015,7 @@ private hasPendingRasterTileWork(): boolean {
 		const inputEl = event.currentTarget;
 
 		window.requestAnimationFrame(() => {
-			if (document.activeElement === inputEl) {
+			if (activeDocument.activeElement === inputEl) {
 				inputEl.select();
 			}
 		});
@@ -7120,7 +7120,7 @@ private hasPendingRasterTileWork(): boolean {
 		const outerBounds = expandBounds(selection.bounds, selection.padding);
 		const canvasUnitsPerPixel = this.getCanvasUnitsForScreenPixels(1);
 
-		const rectEl = document.createElementNS(SVG_NS, "rect");
+		const rectEl = activeDocument.createElementNS(SVG_NS, "rect");
 		rectEl.classList.add("draw-in-canvas-selection-box");
 		rectEl.setAttribute("x", roundCoordinate(outerBounds.minX).toString());
 		rectEl.setAttribute("y", roundCoordinate(outerBounds.minY).toString());
@@ -7157,7 +7157,7 @@ private hasPendingRasterTileWork(): boolean {
 
 	private createSelectionHandleEl(handle: ResizeHandle, bounds: StrokeBounds): SVGRectElement {
 		const point = getResizeHandlePoint(bounds, handle);
-		const handleEl = document.createElementNS(SVG_NS, "rect");
+		const handleEl = activeDocument.createElementNS(SVG_NS, "rect");
 		handleEl.classList.add("draw-in-canvas-selection-handle", `mod-${handle}`);
 		handleEl.dataset.resizeHandle = handle;
 		const handleSize = this.getCanvasUnitsForScreenPixels(RESIZE_HANDLE_SIZE);
@@ -7201,10 +7201,10 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createStrokeScaleMenuContainerEl(): HTMLElement {
-		const containerEl = document.createElement("div");
+		const containerEl = activeDocument.createElement("div");
 		containerEl.classList.add("canvas-menu-container", "draw-in-canvas-stroke-scale-menu-container");
 
-		const menuEl = document.createElement("div");
+		const menuEl = activeDocument.createElement("div");
 		menuEl.classList.add("canvas-menu", "draw-in-canvas-stroke-scale-menu");
 		menuEl.append(
 			this.createStrokeScaleButtonEl("grow"),
@@ -7220,7 +7220,7 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createStrokeScaleButtonEl(direction: "grow" | "shrink"): HTMLButtonElement {
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-stroke-scale-button");
 		buttonEl.setAttribute("aria-label", direction === "grow" ? "Make selected drawing larger" : "Make selected drawing smaller");
@@ -7236,10 +7236,10 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private createSelectedStrokeLayerMenuEl(): HTMLElement {
-		const wrapperEl = document.createElement("div");
+		const wrapperEl = activeDocument.createElement("div");
 		wrapperEl.classList.add("draw-in-canvas-layer-menu", "draw-in-canvas-stroke-layer-menu");
 
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-layer-menu-button");
 		buttonEl.setAttribute("aria-label", "Layer selected drawing");
@@ -7248,7 +7248,7 @@ private hasPendingRasterTileWork(): boolean {
 		buttonEl.setAttribute("data-tooltip-position", "top");
 		setIcon(buttonEl, "layers");
 
-		const submenuEl = document.createElement("div");
+		const submenuEl = activeDocument.createElement("div");
 		submenuEl.classList.add("canvas-menu", "draw-in-canvas-layer-submenu");
 		submenuEl.setAttribute("role", "menu");
 		submenuEl.append(...STROKE_LAYER_ACTIONS.map((action) => this.createSelectedStrokeLayerButtonEl(action)));
@@ -7264,7 +7264,7 @@ private hasPendingRasterTileWork(): boolean {
 
 	private createSelectedStrokeLayerButtonEl(action: LayerAction): HTMLButtonElement {
 		const buttonConfig = STROKE_LAYER_BUTTON_CONFIGS[action];
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-layer-submenu-button");
 		buttonEl.disabled = !this.canReorderSelectedStrokes(action);
@@ -7283,7 +7283,7 @@ private hasPendingRasterTileWork(): boolean {
 
 
 	private createSelectedStrokeDeleteButtonEl(): HTMLButtonElement {
-		const buttonEl = document.createElement("button");
+		const buttonEl = activeDocument.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-stroke-delete-button");
 		buttonEl.setAttribute("aria-label", "Delete selected stroke");
@@ -8616,7 +8616,7 @@ function createBrushSliderControlEl(
 	valueClassName: string,
 	valueText: string,
 ): HTMLElement {
-	const sliderEl = document.createElement("div");
+	const sliderEl = activeDocument.createElement("div");
 	const labelId = createStrokeId();
 
 	sliderEl.classList.add("draw-in-canvas-brush-slider-control", "draw-in-canvas-brush-slider");
@@ -8626,19 +8626,19 @@ function createBrushSliderControlEl(
 	sliderEl.setAttribute("aria-labelledby", labelId);
 	sliderEl.setAttribute("aria-orientation", "vertical");
 
-	const labelEl = document.createElement("span");
+	const labelEl = activeDocument.createElement("span");
 	labelEl.id = labelId;
 	labelEl.classList.add("draw-in-canvas-brush-slider-label");
 	labelEl.textContent = label;
 
-	const trackEl = document.createElement("span");
+	const trackEl = activeDocument.createElement("span");
 	trackEl.classList.add("draw-in-canvas-brush-slider-track");
 
-	const thumbEl = document.createElement("span");
+	const thumbEl = activeDocument.createElement("span");
 	thumbEl.classList.add("draw-in-canvas-brush-slider-thumb");
 	trackEl.appendChild(thumbEl);
 
-	const valueEl = document.createElement("output");
+	const valueEl = activeDocument.createElement("output");
 	valueEl.classList.add("draw-in-canvas-brush-slider-value", valueClassName);
 	valueEl.setAttribute("aria-live", "polite");
 	valueEl.textContent = valueText;
@@ -8654,17 +8654,17 @@ function createSliderControlEl(
 	valueText: string,
 	sliderEl: HTMLInputElement,
 ): HTMLElement {
-	const controlEl = document.createElement("div");
+	const controlEl = activeDocument.createElement("div");
 	controlEl.classList.add("draw-in-canvas-stroke-slider-control");
 
-	const headerEl = document.createElement("div");
+	const headerEl = activeDocument.createElement("div");
 	headerEl.classList.add("draw-in-canvas-stroke-width-header");
 
-	const labelEl = document.createElement("label");
+	const labelEl = activeDocument.createElement("label");
 	labelEl.htmlFor = inputId;
 	labelEl.textContent = label;
 
-	const valueEl = document.createElement("output");
+	const valueEl = activeDocument.createElement("output");
 	valueEl.classList.add(valueClassName);
 	valueEl.setAttribute("for", inputId);
 	valueEl.setAttribute("aria-live", "polite");
@@ -10026,9 +10026,9 @@ function isEditableEventTarget(target: EventTarget | null): boolean {
 	}
 
 	return target.isContentEditable
-		|| target instanceof HTMLInputElement
-		|| target instanceof HTMLTextAreaElement
-		|| target instanceof HTMLSelectElement;
+		|| target.instanceOf(HTMLInputElement)
+		|| target.instanceOf(HTMLTextAreaElement)
+		|| target.instanceOf(HTMLSelectElement);
 }
 
 function isNativeCanvasContentTarget(target: EventTarget | null): boolean {

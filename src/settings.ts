@@ -189,7 +189,7 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		const headingEl = document.createElement("h2");
+		const headingEl = activeDocument.createElement("h2");
 		headingEl.textContent = "Draw in canvas";
 		containerEl.appendChild(headingEl);
 
@@ -248,8 +248,8 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Pen cursor fallback")
-			.setDesc("Show a plugin cursor while drawing with a stylus when the native cursor is hidden or unreliable.")
+			.setName("Stylus pointer fallback")
+			.setDesc("Show a plugin pointer while drawing with a stylus when the native pointer is hidden or unreliable.")
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.usePenCursorFallback)
 				.onChange((value) => {
@@ -265,7 +265,7 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 					this.plugin.setAllowTinyCanvasElements(value);
 				}));
 
-		const noteEl = document.createElement("p");
+		const noteEl = activeDocument.createElement("p");
 		noteEl.classList.add("setting-item-description");
 		noteEl.textContent = "Drawings are stored inside each .canvas file as plugin JSON metadata.";
 		containerEl.appendChild(noteEl);
