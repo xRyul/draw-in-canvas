@@ -36,6 +36,16 @@ import {
 	type CanvasStrokeStyle,
 } from "./stroke-style.ts";
 import {
+	getStrokeColorButtonLabel,
+	getStrokeControlsGroupLabel,
+	getStrokeControlsMode,
+	getStrokeOpacitySliderLabel,
+	getStrokeSettingsButtonLabel,
+	getStrokeSizeSliderLabel,
+	shouldShowStrokeControls,
+	type StrokeControlsMode,
+} from "./stroke-controls-mode";
+import {
 	CanvasDrawingData,
 	CanvasStroke,
 	COLOR_HISTORY_LIMIT,
@@ -503,8 +513,6 @@ export class DrawingLayer {
 	private brushSettingsButtonEl: HTMLButtonElement | null = null;
 	private colorPaletteTriggerEl: HTMLElement | null = null;
 	private strokeSettingsPaletteTriggerEl: HTMLElement | null = null;
-	private selectedStrokeColorButtonEl: HTMLButtonElement | null = null;
-	private selectedStrokeSettingsButtonEl: HTMLButtonElement | null = null;
 	private colorPaletteTarget: ColorPaletteTarget = "brush";
 	private strokeSettingsPaletteTarget: StrokeSettingsPaletteTarget = "brush";
 	private customColorHex = DEFAULT_CUSTOM_COLOR;
@@ -687,7 +695,7 @@ export class DrawingLayer {
 		this.selectStrokes([]);
 		this.mountRenderLayer();
 		this.mountCaptureLayer();
-		this.mountBrushControls();
+		this.syncBrushControlsMountState();
 		this.syncToolbarButton();
 	}
 
@@ -702,7 +710,7 @@ export class DrawingLayer {
 		this.captureEl?.remove();
 		this.captureEl = null;
 
-		this.removeBrushControls();
+		this.syncBrushControlsMountState();
 
 		if (this.positionedEl) {
 			this.positionedEl.setCssStyles({position: this.previousPosition});
@@ -765,7 +773,7 @@ export class DrawingLayer {
 			colorHistory: this.drawingData.colorHistory,
 		};
 		this.rebuildStrokeIndex();
-		this.selectedStrokeIds.clear();
+		this.selectStrokes([]);
 		this.renderStrokes();
 		this.hasPendingSave = true;
 		await this.saveNow();
@@ -976,8 +984,28 @@ export class DrawingLayer {
 		this.syncStrokeSettingsPaletteExpandedState();
 	}
 
+	private syncBrushControlsMountState(): void {
+		if (!shouldShowStrokeControls(this.getStrokeControlsState())) {
+			this.removeBrushControls();
+			return;
+		}
+
+		this.mountBrushControls();
+	}
+
+	private getStrokeControlsState(): {isDrawingEnabled: boolean; selectedStrokeCount: number} {
+		return {
+			isDrawingEnabled: this.isDrawingEnabled(),
+			selectedStrokeCount: this.selectedStrokeIds.size,
+		};
+	}
+
+	private getBrushControlsTarget(): StrokeControlsMode {
+		return getStrokeControlsMode(this.getStrokeControlsState());
+	}
+
 	private mountBrushControls(): void {
-		if (!this.captureEl) {
+		if (!shouldShowStrokeControls(this.getStrokeControlsState())) {
 			this.removeBrushControls();
 			return;
 		}
@@ -995,7 +1023,6 @@ export class DrawingLayer {
 		const controlsEl = document.createElement("div");
 		controlsEl.classList.add("draw-in-canvas-brush-controls");
 		controlsEl.setAttribute("role", "group");
-		controlsEl.setAttribute("aria-label", "Brush size, color, stroke settings, and opacity");
 		const colorButtonEl = this.createBrushColorButtonEl();
 		const settingsButtonEl = this.createBrushSettingsButtonEl();
 
@@ -1029,9 +1056,9 @@ export class DrawingLayer {
 	private createBrushSizeSliderControlEl(): HTMLElement {
 		const sliderEl = createBrushSliderControlEl(
 			"size",
-			"Brush size",
+			getStrokeSizeSliderLabel(this.getBrushControlsTarget()),
 			"draw-in-canvas-brush-size-value",
-			formatStrokeWidth(normalizeStrokeWidth(this.settings.strokeWidth)),
+			formatStrokeWidth(normalizeStrokeWidth(this.getBrushControlsStyle().width)),
 		);
 		sliderEl.classList.add("draw-in-canvas-brush-size-slider");
 
@@ -1050,7 +1077,6 @@ export class DrawingLayer {
 		const buttonEl = document.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("draw-in-canvas-brush-color-button");
-		buttonEl.setAttribute("aria-label", "Open stroke color");
 		buttonEl.setAttribute("aria-haspopup", "dialog");
 		buttonEl.setAttribute("aria-expanded", (this.colorPaletteEl?.isConnected ?? false).toString());
 		this.brushColorButtonEl = buttonEl;
@@ -1068,7 +1094,6 @@ export class DrawingLayer {
 		const buttonEl = document.createElement("button");
 		buttonEl.type = "button";
 		buttonEl.classList.add("draw-in-canvas-brush-settings-button");
-		buttonEl.setAttribute("aria-label", "Open stroke and handwriting settings");
 		buttonEl.setAttribute("aria-haspopup", "dialog");
 		buttonEl.setAttribute("aria-expanded", (this.strokeSettingsPaletteEl?.isConnected ?? false).toString());
 		setIcon(buttonEl, "sliders-horizontal");
@@ -1086,9 +1111,9 @@ export class DrawingLayer {
 	private createBrushOpacitySliderControlEl(): HTMLElement {
 		const sliderEl = createBrushSliderControlEl(
 			"opacity",
-			"Brush opacity",
+			getStrokeOpacitySliderLabel(this.getBrushControlsTarget()),
 			"draw-in-canvas-brush-opacity-value",
-			formatStrokeOpacity(normalizeStrokeOpacity(this.settings.strokeOpacity)),
+			formatStrokeOpacity(normalizeStrokeOpacity(this.getBrushControlsStyle().opacity)),
 		);
 		sliderEl.classList.add("draw-in-canvas-brush-opacity-slider");
 
@@ -1108,8 +1133,12 @@ export class DrawingLayer {
 			return;
 		}
 
+		const mode = this.getBrushControlsTarget();
+		const style = this.getBrushControlsStyle();
+
+		this.brushControlsEl.setAttribute("aria-label", getStrokeControlsGroupLabel(mode));
 		this.brushControlsEl.setCssProps({
-			"--draw-in-canvas-current-color": this.settings.strokeColor,
+			"--draw-in-canvas-current-color": this.getStrokeColorForTarget(mode),
 		});
 
 		this.syncColorPaletteExpandedState();
@@ -1119,17 +1148,17 @@ export class DrawingLayer {
 			"size",
 			".draw-in-canvas-brush-size-slider",
 			".draw-in-canvas-brush-size-value",
-			normalizeStrokeWidth(this.settings.strokeWidth),
+			normalizeStrokeWidth(style.width),
 			formatStrokeWidth,
-			"Brush size",
+			getStrokeSizeSliderLabel(mode),
 		);
 		this.syncBrushSlider(
 			"opacity",
 			".draw-in-canvas-brush-opacity-slider",
 			".draw-in-canvas-brush-opacity-value",
-			normalizeStrokeOpacity(this.settings.strokeOpacity),
+			normalizeStrokeOpacity(style.opacity),
 			formatStrokeOpacity,
-			"Brush opacity",
+			getStrokeOpacitySliderLabel(mode),
 		);
 	}
 
@@ -1145,6 +1174,7 @@ export class DrawingLayer {
 		const valueText = formatValue(value);
 		const sliderEl = this.brushControlsEl?.querySelector<HTMLElement>(sliderSelector);
 		const valueEl = this.brushControlsEl?.querySelector<HTMLElement>(valueSelector);
+		const labelEl = sliderEl?.querySelector<HTMLElement>(".draw-in-canvas-brush-slider-label");
 
 		if (sliderEl) {
 			sliderEl.title = `${label}: ${valueText}`;
@@ -1153,6 +1183,10 @@ export class DrawingLayer {
 			sliderEl.setAttribute("aria-valuemax", bounds.max.toString());
 			sliderEl.setAttribute("aria-valuenow", normalizeBrushSliderValue(setting, value).toString());
 			sliderEl.setAttribute("aria-valuetext", valueText);
+		}
+
+		if (labelEl) {
+			labelEl.textContent = label;
 		}
 
 		if (valueEl) {
@@ -1270,27 +1304,19 @@ export class DrawingLayer {
 	}
 
 	private getColorPaletteTriggerEl(target: ColorPaletteTarget = this.colorPaletteTarget): HTMLElement | null {
-		if (target === "selection") {
-			return this.selectedStrokeColorButtonEl?.isConnected ? this.selectedStrokeColorButtonEl : null;
-		}
-
-		if (this.brushColorButtonEl?.isConnected) {
+		if (this.brushColorButtonEl?.isConnected && this.getBrushControlsTarget() === target) {
 			return this.brushColorButtonEl;
 		}
 
-		return this.toolbarButtonEl?.isConnected ? this.toolbarButtonEl : null;
+		return target === "brush" && this.toolbarButtonEl?.isConnected ? this.toolbarButtonEl : null;
 	}
 
 	private getColorPaletteAnchorEl(): HTMLElement | null {
-		if (this.colorPaletteTarget === "selection") {
-			return this.getColorPaletteTriggerEl("selection");
-		}
-
-		if (this.brushControlsEl?.isConnected) {
+		if (this.brushControlsEl?.isConnected && this.getBrushControlsTarget() === this.colorPaletteTarget) {
 			return this.brushControlsEl;
 		}
 
-		return this.getColorPaletteTriggerEl("brush");
+		return this.getColorPaletteTriggerEl();
 	}
 
 	private positionColorPalette(): void {
@@ -1367,23 +1393,19 @@ export class DrawingLayer {
 	}
 
 	private getStrokeSettingsPaletteTriggerEl(target: StrokeSettingsPaletteTarget = this.strokeSettingsPaletteTarget): HTMLElement | null {
-		if (target === "selection") {
-			return this.selectedStrokeSettingsButtonEl?.isConnected ? this.selectedStrokeSettingsButtonEl : null;
+		if (this.brushSettingsButtonEl?.isConnected && this.getBrushControlsTarget() === target) {
+			return this.brushSettingsButtonEl;
 		}
 
-		return this.brushSettingsButtonEl?.isConnected ? this.brushSettingsButtonEl : null;
+		return null;
 	}
 
 	private getStrokeSettingsPaletteAnchorEl(): HTMLElement | null {
-		if (this.strokeSettingsPaletteTarget === "selection") {
-			return this.getStrokeSettingsPaletteTriggerEl("selection");
-		}
-
-		if (this.brushControlsEl?.isConnected) {
+		if (this.brushControlsEl?.isConnected && this.getBrushControlsTarget() === this.strokeSettingsPaletteTarget) {
 			return this.brushControlsEl;
 		}
 
-		return this.getStrokeSettingsPaletteTriggerEl("brush");
+		return this.getStrokeSettingsPaletteTriggerEl();
 	}
 
 	private positionStrokeSettingsPalette(): void {
@@ -1474,25 +1496,21 @@ export class DrawingLayer {
 	private syncColorPaletteExpandedState(): void {
 		const isOpen = this.colorPaletteEl?.isConnected ?? false;
 		const isBrushColorOpen = isOpen && this.colorPaletteTarget === "brush";
-		const isSelectionColorOpen = isOpen && this.colorPaletteTarget === "selection";
+		const brushControlsTarget = this.getBrushControlsTarget();
+		const isBrushControlColorOpen = isOpen && this.colorPaletteTarget === brushControlsTarget;
 
 		this.toolbarButtonEl?.setAttribute("aria-expanded", isBrushColorOpen.toString());
-		this.brushColorButtonEl?.setAttribute("aria-expanded", isBrushColorOpen.toString());
-		this.brushColorButtonEl?.setAttribute("aria-label", isBrushColorOpen ? "Close stroke color" : "Open stroke color");
-		this.selectedStrokeColorButtonEl?.setAttribute("aria-expanded", isSelectionColorOpen.toString());
-		this.selectedStrokeColorButtonEl?.setAttribute("aria-label", isSelectionColorOpen ? "Close selected stroke color" : "Change selected stroke color");
-		this.syncSelectedStrokeColorButton();
+		this.brushColorButtonEl?.setAttribute("aria-expanded", isBrushControlColorOpen.toString());
+		this.brushColorButtonEl?.setAttribute("aria-label", getStrokeColorButtonLabel(brushControlsTarget, isBrushControlColorOpen));
 	}
 
 	private syncStrokeSettingsPaletteExpandedState(): void {
 		const isOpen = this.strokeSettingsPaletteEl?.isConnected ?? false;
-		const isBrushSettingsOpen = isOpen && this.strokeSettingsPaletteTarget === "brush";
-		const isSelectionSettingsOpen = isOpen && this.strokeSettingsPaletteTarget === "selection";
+		const brushControlsTarget = this.getBrushControlsTarget();
+		const isBrushControlSettingsOpen = isOpen && this.strokeSettingsPaletteTarget === brushControlsTarget;
 
-		this.brushSettingsButtonEl?.setAttribute("aria-expanded", isBrushSettingsOpen.toString());
-		this.brushSettingsButtonEl?.setAttribute("aria-label", isBrushSettingsOpen ? "Close stroke and handwriting settings" : "Open stroke and handwriting settings");
-		this.selectedStrokeSettingsButtonEl?.setAttribute("aria-expanded", isSelectionSettingsOpen.toString());
-		this.selectedStrokeSettingsButtonEl?.setAttribute("aria-label", isSelectionSettingsOpen ? "Close selected stroke settings" : "Change selected stroke settings");
+		this.brushSettingsButtonEl?.setAttribute("aria-expanded", isBrushControlSettingsOpen.toString());
+		this.brushSettingsButtonEl?.setAttribute("aria-label", getStrokeSettingsButtonLabel(brushControlsTarget, isBrushControlSettingsOpen));
 	}
 
 	private syncColorPaletteSelection(): void {
@@ -2040,7 +2058,7 @@ export class DrawingLayer {
 			this.syncColorWheelControls();
 			this.syncHslSliderControls();
 			this.syncColorPaletteHeader();
-			this.syncSelectedStrokeColorButton();
+			this.syncBrushControls();
 			return;
 		}
 
@@ -2049,11 +2067,14 @@ export class DrawingLayer {
 		this.syncToolbarButton();
 		this.syncColorPaletteSelection();
 		this.syncBrushControls();
-		this.syncSelectedStrokeColorButton();
 	}
 
 	private getColorPaletteStrokeColor(): string {
-		if (this.colorPaletteTarget === "selection") {
+		return this.getStrokeColorForTarget(this.colorPaletteTarget);
+	}
+
+	private getStrokeColorForTarget(target: ColorPaletteTarget): string {
+		if (target === "selection") {
 			return this.getSelectedStrokePaletteColor() ?? this.settings.strokeColor;
 		}
 
@@ -2072,11 +2093,23 @@ export class DrawingLayer {
 		return null;
 	}
 
+	private getBrushControlsStyle(): CanvasStrokeStyle {
+		return this.getStrokeSettingsStyleForTarget(this.getBrushControlsTarget()) ?? this.getDefaultStrokeStyle();
+	}
+
 	private getStrokeSettingsPaletteStyle(): CanvasStrokeStyle | null {
-		if (this.strokeSettingsPaletteTarget === "selection") {
+		return this.getStrokeSettingsStyleForTarget(this.strokeSettingsPaletteTarget);
+	}
+
+	private getStrokeSettingsStyleForTarget(target: StrokeSettingsPaletteTarget): CanvasStrokeStyle | null {
+		if (target === "selection") {
 			return this.getSelectedStrokeStyle();
 		}
 
+		return this.getDefaultStrokeStyle();
+	}
+
+	private getDefaultStrokeStyle(): CanvasStrokeStyle {
 		return {
 			width: this.settings.strokeWidth,
 			hardness: this.settings.strokeHardness,
@@ -2145,7 +2178,7 @@ export class DrawingLayer {
 			return;
 		}
 
-		this.syncSelectedStrokeColorButton();
+		this.syncBrushControls();
 		this.scheduleSave();
 	}
 
@@ -2183,10 +2216,6 @@ export class DrawingLayer {
 		this.scheduleSave();
 	}
 
-	private syncSelectedStrokeColorButton(): void {
-		const color = this.getSelectedStrokePaletteColor() ?? this.settings.strokeColor;
-		this.selectedStrokeColorButtonEl?.setCssProps({"--draw-in-canvas-current-color": color});
-	}
 
 	private createColorPaletteHeaderEl(): HTMLElement {
 		const headerEl = document.createElement("div");
@@ -2984,6 +3013,7 @@ export class DrawingLayer {
 		}
 
 		this.syncStrokeSettingsPaletteControls();
+		this.syncBrushControls();
 		this.renderSelectionBox();
 		this.positionStrokeSettingsPalette();
 		this.scheduleSave();
@@ -3085,8 +3115,10 @@ export class DrawingLayer {
 			return;
 		}
 
-		const strokeWidth = normalizeStrokeWidth(this.settings.strokeWidth);
-		const strokeOpacity = normalizeStrokeOpacity(this.settings.strokeOpacity);
+		const mode = this.getBrushControlsTarget();
+		const style = this.getBrushControlsStyle();
+		const strokeWidth = normalizeStrokeWidth(style.width);
+		const strokeOpacity = normalizeStrokeOpacity(style.opacity);
 		const previewEl = this.ensureBrushPreviewEl();
 		const valueEl = previewEl.querySelector<HTMLElement>(".draw-in-canvas-brush-preview-value");
 		const detailEl = previewEl.querySelector<HTMLElement>(".draw-in-canvas-brush-preview-detail");
@@ -3094,7 +3126,7 @@ export class DrawingLayer {
 		previewEl.dataset.brushPreviewSetting = activeSetting;
 		previewEl.setCssProps({
 			"--draw-in-canvas-brush-preview-size": `${Math.max(4, strokeWidth)}px`,
-			"--draw-in-canvas-brush-preview-color": this.settings.strokeColor,
+			"--draw-in-canvas-brush-preview-color": this.getStrokeColorForTarget(mode),
 			"--draw-in-canvas-brush-preview-opacity": formatStrokeOpacityRatio(strokeOpacity),
 		});
 
@@ -3104,7 +3136,7 @@ export class DrawingLayer {
 
 		if (detailEl) {
 			detailEl.textContent = activeSetting === "opacity"
-				? `${formatStrokeWidth(strokeWidth)} brush`
+				? `${formatStrokeWidth(strokeWidth)} ${mode === "selection" ? "stroke" : "brush"}`
 				: `${formatStrokeOpacity(strokeOpacity)} opacity`;
 		}
 
@@ -3299,9 +3331,7 @@ export class DrawingLayer {
 					this.syncSelectedStrokeScaleMenuPosition();
 				}
 			}
-			if (this.isDrawingEnabled()) {
-				this.mountBrushControls();
-			}
+			this.syncBrushControlsMountState();
 		});
 	}
 
@@ -6106,6 +6136,9 @@ private hasPendingRasterTileWork(): boolean {
 		event.preventDefault();
 		event.stopPropagation();
 		this.closeBrushPreview();
+		if (this.getBrushControlsTarget() === "selection") {
+			this.commitPendingSelectedStrokeStyleChanges();
+		}
 	};
 
 	private readonly handleBrushSliderKeyDown = (event: KeyboardEvent): void => {
@@ -6128,6 +6161,9 @@ private hasPendingRasterTileWork(): boolean {
 		event.preventDefault();
 		event.stopPropagation();
 		this.setBrushSliderValue(setting, nextValue);
+		if (this.getBrushControlsTarget() === "selection") {
+			this.commitPendingSelectedStrokeStyleChanges();
+		}
 	};
 
 	private readonly handleBrushButtonPointerDown = (event: PointerEvent): void => {
@@ -6143,13 +6179,13 @@ private hasPendingRasterTileWork(): boolean {
 	private readonly handleBrushColorButtonClick = (event: MouseEvent): void => {
 		event.preventDefault();
 		event.stopPropagation();
-		this.toggleColorPalette();
+		this.toggleColorPalette(this.getBrushControlsTarget());
 	};
 
 	private readonly handleBrushSettingsButtonClick = (event: MouseEvent): void => {
 		event.preventDefault();
 		event.stopPropagation();
-		this.toggleStrokeSettingsPalette("brush");
+		this.toggleStrokeSettingsPalette(this.getBrushControlsTarget());
 	};
 
 	private updateBrushSliderFromPointer(sliderEl: HTMLElement, event: PointerEvent): void {
@@ -6163,21 +6199,36 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private getBrushSliderCurrentValue(setting: BrushSliderSetting): number {
+		const style = this.getBrushControlsStyle();
 		return setting === "size"
-			? normalizeStrokeWidth(this.settings.strokeWidth)
-			: normalizeStrokeOpacity(this.settings.strokeOpacity);
+			? normalizeStrokeWidth(style.width)
+			: normalizeStrokeOpacity(style.opacity);
 	}
 
 	private setBrushSliderValue(setting: BrushSliderSetting, value: number): void {
+		const target = this.getBrushControlsTarget();
+
 		if (setting === "size") {
 			const strokeWidth = normalizeStrokeWidth(value);
-			this.setStrokeWidth(strokeWidth);
+
+			if (target === "selection") {
+				this.setSelectedStrokeWidth(strokeWidth);
+			} else {
+				this.setStrokeWidth(strokeWidth);
+			}
+
 			this.updateBrushPreview("size");
 			return;
 		}
 
 		const strokeOpacity = normalizeStrokeOpacity(value);
-		this.setStrokeOpacity(strokeOpacity);
+
+		if (target === "selection") {
+			this.setSelectedStrokeOpacity(strokeOpacity);
+		} else {
+			this.setStrokeOpacity(strokeOpacity);
+		}
+
 		this.updateBrushPreview("opacity");
 	}
 
@@ -6971,16 +7022,30 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private selectStrokes(strokeIds: readonly string[]): void {
-		this.selectedStrokeIds.clear();
+		const nextSelectedStrokeIds = new Set<string>();
 
 		for (const strokeId of strokeIds) {
 			if (this.findStroke(strokeId)) {
-				this.selectedStrokeIds.add(strokeId);
+				nextSelectedStrokeIds.add(strokeId);
 			}
+		}
+
+		const didSelectionChange = nextSelectedStrokeIds.size !== this.selectedStrokeIds.size
+			|| Array.from(nextSelectedStrokeIds).some((strokeId) => !this.selectedStrokeIds.has(strokeId));
+
+		if (didSelectionChange) {
+			this.commitPendingSelectedStrokeRecolor();
+		}
+
+		this.selectedStrokeIds.clear();
+
+		for (const strokeId of nextSelectedStrokeIds) {
+			this.selectedStrokeIds.add(strokeId);
 		}
 
 		this.syncVisibleStrokeElements();
 		this.renderSelectionBox();
+		this.syncBrushControlsMountState();
 
 		if (this.colorPaletteTarget === "selection") {
 			if (this.selectedStrokeIds.size === 0) {
@@ -7145,8 +7210,6 @@ private hasPendingRasterTileWork(): boolean {
 			this.createStrokeScaleButtonEl("grow"),
 			this.createStrokeScaleButtonEl("shrink"),
 			this.createSelectedStrokeLayerMenuEl(),
-			this.createSelectedStrokeColorButtonEl(),
-			this.createSelectedStrokeSettingsButtonEl(),
 			this.createSelectedStrokeDeleteButtonEl(),
 		);
 		containerEl.appendChild(menuEl);
@@ -7218,45 +7281,6 @@ private hasPendingRasterTileWork(): boolean {
 		return buttonEl;
 	}
 
-	private createSelectedStrokeColorButtonEl(): HTMLButtonElement {
-		const buttonEl = document.createElement("button");
-		buttonEl.type = "button";
-		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-stroke-color-button");
-		buttonEl.setAttribute("aria-label", "Change selected stroke color");
-		buttonEl.setAttribute("aria-haspopup", "dialog");
-		buttonEl.setAttribute("aria-expanded", "false");
-		buttonEl.setAttribute("data-tooltip-position", "top");
-		setIcon(buttonEl, "palette");
-		this.selectedStrokeColorButtonEl = buttonEl;
-		this.syncSelectedStrokeColorButton();
-
-		this.strokeScaleMenuDisposers.push(
-			this.addListener(buttonEl, "pointerdown", this.handleStrokeScaleButtonPointerDown),
-			this.addListener(buttonEl, "click", this.handleSelectedStrokeColorButtonClick),
-		);
-
-		return buttonEl;
-	}
-
-	private createSelectedStrokeSettingsButtonEl(): HTMLButtonElement {
-		const buttonEl = document.createElement("button");
-		buttonEl.type = "button";
-		buttonEl.classList.add("clickable-icon", "draw-in-canvas-stroke-action-button", "draw-in-canvas-stroke-settings-button");
-		buttonEl.setAttribute("aria-label", "Change selected stroke settings");
-		buttonEl.setAttribute("aria-haspopup", "dialog");
-		buttonEl.setAttribute("aria-expanded", "false");
-		buttonEl.setAttribute("data-tooltip-position", "top");
-		setIcon(buttonEl, "sliders-horizontal");
-		this.selectedStrokeSettingsButtonEl = buttonEl;
-		this.syncStrokeSettingsPaletteExpandedState();
-
-		this.strokeScaleMenuDisposers.push(
-			this.addListener(buttonEl, "pointerdown", this.handleStrokeScaleButtonPointerDown),
-			this.addListener(buttonEl, "click", this.handleSelectedStrokeSettingsButtonClick),
-		);
-
-		return buttonEl;
-	}
 
 	private createSelectedStrokeDeleteButtonEl(): HTMLButtonElement {
 		const buttonEl = document.createElement("button");
@@ -7362,8 +7386,6 @@ private hasPendingRasterTileWork(): boolean {
 
 		this.strokeScaleMenuContainerEl?.remove();
 		this.strokeScaleMenuContainerEl = null;
-		this.selectedStrokeColorButtonEl = null;
-		this.selectedStrokeSettingsButtonEl = null;
 	}
 
 	private readonly handleStrokeScaleButtonPointerDown = (event: PointerEvent): void => {
@@ -7394,17 +7416,6 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 
-	private readonly handleSelectedStrokeColorButtonClick = (event: MouseEvent): void => {
-		event.preventDefault();
-		event.stopPropagation();
-		this.toggleColorPalette("selection");
-	};
-
-	private readonly handleSelectedStrokeSettingsButtonClick = (event: MouseEvent): void => {
-		event.preventDefault();
-		event.stopPropagation();
-		this.toggleStrokeSettingsPalette("selection");
-	};
 
 	private readonly handleSelectedStrokeDeleteButtonClick = (event: MouseEvent): void => {
 		event.preventDefault();

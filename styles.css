@@ -1544,19 +1544,6 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	opacity: 0.45;
 }
 
-.draw-in-canvas-stroke-color-button::after {
-	content: "";
-	position: absolute;
-	right: 4px;
-	bottom: 4px;
-	width: 7px;
-	height: 7px;
-	border: 1px solid var(--background-primary);
-	border-radius: 50%;
-	background: var(--draw-in-canvas-current-color, var(--interactive-accent));
-	box-shadow: 0 0 0 1px var(--background-modifier-border);
-	pointer-events: none;
-}
 
 .draw-in-canvas-stroke-delete-button {
 	color: var(--text-error);

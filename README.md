@@ -48,15 +48,16 @@ pnpm dev
 2. Existing Draw in Canvas strokes are shown automatically.
 3. Use the pencil button in the right canvas controls, between **Canvas settings** and **Zoom in**, or run **Draw in Canvas: Toggle drawing mode on active canvas**.
 4. Select the color button in the left brush controls to open the stroke palette. Long-press the pencil button, or focus it and press `ArrowDown`, to open the same palette on the left. The palette has preset colors, a native color picker, a hex color field, generated shades for the chosen color, size, hardness, opacity, and a **Handwriting** toggle with advanced thinning, streamline, smoothing, and taper controls. Opening this palette also enables drawing mode, and a visual dot preview shows the selected size and opacity while you drag the size slider.
-5. The handwriting controls start from balanced perfect-freehand-style defaults: `0.5` thinning, streamline, and smoothing, plus a small taper for less rounded starts and ends. Changes apply to new strokes only. Select **Reset** in the palette to return those advanced controls to their defaults.
+5. The handwriting controls start from balanced perfect-freehand-style defaults: `0.5` thinning, streamline, and smoothing, plus a small taper for less rounded starts and ends. In drawing mode, changes apply to new strokes only. Select **Reset** in the palette to return those advanced controls to their defaults.
 6. Drag anywhere on the canvas to draw. Press `Esc`, select the pencil button, or run the toggle command again to stop drawing.
 7. Leave drawing mode, then select and drag an existing stroke to move it.
-8. Drag on an empty canvas area to use Obsidian's native marquee selection; it selects native canvas cards and Draw in Canvas strokes together.
-9. Drag from inside the selected bounding box to move the whole selected group, even when the pointer is not directly on a stroke line.
-10. Drag a corner handle on the selected bounding box to resize selected strokes larger or smaller. If **Settings → Draw in canvas → Allow tiny canvas items** is enabled, selected strokes also show +/− buttons for quick scaling.
-11. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
-12. Use `Cmd`/`Ctrl`+`Z` to undo and `Cmd`/`Ctrl`+`Shift`+`Z` or `Ctrl`+`Y` to redo Draw in Canvas actions from the current session. The canvas **Undo** / **Redo** buttons work too. Use **Clear drawings from active canvas** as needed.
-13. Optional: enable **Allow tiny canvas items** in the plugin settings to resize native canvas cards, groups, and Draw in Canvas strokes below Obsidian's default size limit. This also adds +/− buttons to native canvas selections and allows closer zoom on tiny items.
+8. When one or more strokes are selected, the same left controls switch to selected-stroke editing. Use them to change color, size, opacity, hardness, and handwriting options from one place.
+9. Drag on an empty canvas area to use Obsidian's native marquee selection; it selects native canvas cards and Draw in Canvas strokes together.
+10. Drag from inside the selected bounding box to move the whole selected group, even when the pointer is not directly on a stroke line.
+11. Drag a corner handle on the selected bounding box to resize selected strokes larger or smaller. If **Settings → Draw in canvas → Allow tiny canvas items** is enabled, selected strokes also show +/− buttons for quick scaling.
+12. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
+13. Use `Cmd`/`Ctrl`+`Z` to undo and `Cmd`/`Ctrl`+`Shift`+`Z` or `Ctrl`+`Y` to redo Draw in Canvas actions from the current session. The canvas **Undo** / **Redo** buttons work too. Use **Clear drawings from active canvas** as needed.
+14. Optional: enable **Allow tiny canvas items** in the plugin settings to resize native canvas cards, groups, and Draw in Canvas strokes below Obsidian's default size limit. This also adds +/− buttons to native canvas selections and allows closer zoom on tiny items.
 
 ## Notes
 
