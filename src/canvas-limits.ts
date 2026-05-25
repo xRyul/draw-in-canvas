@@ -1,10 +1,14 @@
 import type {CanvasTarget} from "./canvas-target";
+import {
+	DEFAULT_MAX_NATIVE_CANVAS_ZOOM,
+	DEFAULT_MIN_NATIVE_CANVAS_ZOOM,
+	clampNativeCanvasScaleForTinyElements,
+	clampNativeCanvasZoomForTinyElements,
+} from "./canvas-zoom-limits";
 
 // Obsidian's Canvas API is internal, so keep the native canvas patches isolated here.
 
 const TINY_CANVAS_MIN_DIMENSION = 1;
-const DEFAULT_MIN_NATIVE_CANVAS_ZOOM = -4;
-const DEFAULT_MAX_NATIVE_CANVAS_ZOOM = 1;
 const CANVAS_ZOOM_PADDING = 1.1;
 
 interface NativeCanvasBounds {
@@ -120,7 +124,7 @@ export class NativeCanvasInteractionLimits {
 		const originalRequestFrame = canvas.requestFrame;
 		this.hadOwnRequestFrame = Object.prototype.hasOwnProperty.call(canvas, "requestFrame");
 		this.originalRequestFrame = originalRequestFrame;
-		// Canvas rendering hard-clamps Math.clamp(tZoom, -4, 1). Wrap only the scheduled frame callback and relax only that clamp.
+		// Canvas rendering hard-clamps Math.clamp(tZoom, -4, 1). Wrap only the scheduled frame callback and replace the native upper bound with our benchmarked cap.
 		const patchedRequestFrame: NativeCanvasRequestFrame = (timestamp?: number): void => {
 			const frameWindow = canvas.canvasEl?.win ?? window;
 			const originalRequestAnimationFrame = Reflect.get(frameWindow, "requestAnimationFrame");
@@ -188,7 +192,7 @@ export class NativeCanvasInteractionLimits {
 			return false;
 		}
 
-		const scale = Math.max(2 ** DEFAULT_MIN_NATIVE_CANVAS_ZOOM, rawScale);
+		const scale = clampNativeCanvasScaleForTinyElements(rawScale);
 		canvas.tx = (bounds.minX + bounds.maxX) / 2;
 		canvas.ty = (bounds.minY + bounds.maxY) / 2;
 		canvas.zoomCenter = null;
@@ -210,7 +214,7 @@ export class NativeCanvasInteractionLimits {
 			if (min === DEFAULT_MIN_NATIVE_CANVAS_ZOOM
 				&& max === DEFAULT_MAX_NATIVE_CANVAS_ZOOM
 				&& value > DEFAULT_MAX_NATIVE_CANVAS_ZOOM) {
-				return value;
+				return clampNativeCanvasZoomForTinyElements(value);
 			}
 
 			return originalClamp(value, min, max);
