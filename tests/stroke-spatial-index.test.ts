@@ -20,6 +20,31 @@ void test("queries intersecting stroke ids in drawing order", () => {
 	assert.deepEqual(index.queryBounds({minX: 1, minY: 1, maxX: 5, maxY: 5}, "descending"), ["top", "bottom"]);
 });
 
+void test("visits intersecting stroke ids once and supports early stop", () => {
+	const index = new StrokeSpatialIndex(10);
+	index.rebuild([
+		{id: "a", bounds: {minX: 0, minY: 0, maxX: 20, maxY: 20}, order: 0},
+		{id: "b", bounds: {minX: 5, minY: 5, maxX: 6, maxY: 6}, order: 1},
+		{id: "outside", bounds: {minX: 40, minY: 40, maxX: 41, maxY: 41}, order: 2},
+	]);
+
+	const visitedIds: string[] = [];
+	index.forEachBounds({minX: 0, minY: 0, maxX: 12, maxY: 12}, (id) => {
+		visitedIds.push(id);
+		return visitedIds.length < 1;
+	});
+
+	assert.deepEqual(visitedIds, ["a"]);
+
+	const allVisitedIds: string[] = [];
+	index.forEachBounds({minX: 0, minY: 0, maxX: 12, maxY: 12}, (id) => {
+		allVisitedIds.push(id);
+	});
+
+	assert.deepEqual(new Set(allVisitedIds), new Set(["a", "b"]));
+	assert.equal(allVisitedIds.length, 2);
+});
+
 void test("updates moved stroke bounds and removes stale cells", () => {
 	const index = new StrokeSpatialIndex(10);
 	index.set("stroke", {minX: 0, minY: 0, maxX: 4, maxY: 4}, 0);

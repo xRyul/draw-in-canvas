@@ -1464,6 +1464,18 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	pointer-events: none;
 }
 
+.draw-in-canvas-stroke-raster {
+	overflow: visible;
+	pointer-events: none;
+}
+
+.draw-in-canvas-stroke-raster-canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+}
+
 .draw-in-canvas-stroke {
 	pointer-events: none;
 }
@@ -1472,12 +1484,6 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	fill-opacity: 0.96;
 }
 
-
-.draw-in-canvas-stroke-hit {
-	fill: none;
-	cursor: move;
-	pointer-events: stroke;
-}
 
 .draw-in-canvas-stroke-wrapper.is-selected {
 	filter: drop-shadow(0 0 2px var(--interactive-accent));

@@ -27,6 +27,8 @@ interface StrokeSpatialCellRange {
 	maxCellY: number;
 }
 
+export type StrokeSpatialIndexVisitor = (id: string) => boolean | void;
+
 interface StrokeSpatialIndexRecord {
 	bounds: StrokeSpatialBounds;
 	order: number;
@@ -145,6 +147,40 @@ export class StrokeSpatialIndex {
 		}
 
 		return this.sortIds(Array.from(ids), order);
+	}
+
+	forEachBounds(bounds: StrokeSpatialBounds, visitor: StrokeSpatialIndexVisitor): void {
+		if (!isValidSpatialBounds(bounds)) {
+			return;
+		}
+
+		const visitedIds = new Set<string>();
+
+		for (const cellKey of this.getCellKeys(bounds)) {
+			const cellIds = this.cellIdsByKey.get(cellKey);
+
+			if (!cellIds) {
+				continue;
+			}
+
+			for (const id of cellIds) {
+				if (visitedIds.has(id)) {
+					continue;
+				}
+
+				const record = this.recordsById.get(id);
+
+				if (!record || !doSpatialBoundsIntersect(bounds, record.bounds)) {
+					continue;
+				}
+
+				visitedIds.add(id);
+
+				if (visitor(id) === false) {
+					return;
+				}
+			}
+		}
 	}
 
 	sortIdsByOrder(strokeIds: readonly string[], order: StrokeSpatialQueryOrder = "ascending"): string[] {

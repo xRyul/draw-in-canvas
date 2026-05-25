@@ -52,8 +52,42 @@ import {
 	getStrokeSpatialIndexBounds,
 	type StrokeSpatialIndexEntry,
 } from "./stroke-spatial-index";
+import {
+	expandStrokeRenderViewportBounds,
+	filterVisibleStrokeIds,
+} from "./stroke-render-viewport";
+import {shouldRenderStrokeAtLevelOfDetail} from "./stroke-render-lod";
+import {getStrokeRenderBatchKeyForStyle, getStrokeRenderItems} from "./stroke-render-batching";
+import {
+	expandRasterRenderViewportBounds,
+	getRasterDevicePixelRatio,
+	getStrokeRasterRenderPlan,
+	RASTER_RENDER_FRAME_BUDGET_MS,
+	RASTER_RENDER_TIME_CHECK_INTERVAL,
+	shouldUseChunkedRasterStrokeRenderer,
+	shouldUseRasterStrokeRenderer,
+} from "./stroke-raster-render";
+import {
+	doRasterTileBoundsIntersectAny,
+	getRasterTileEntries,
+	getRasterTileEntriesRange,
+	getRasterTileRange,
+	getRasterTileWorldSize,
+	MAX_RASTER_TILE_CACHE_TILES,
+	RASTER_TILE_SETUP_FRAME_BUDGET_MS,
+	RASTER_TILE_SETUP_TIME_CHECK_INTERVAL,
+	shouldUseTiledRasterCache,
+	TILED_RASTER_CACHE_STROKE_THRESHOLD,
+	type RasterTileEntry,
+	type RasterTileRange,
+} from "./stroke-raster-tile-cache";
+import {
+	createStrokePathCacheKey,
+	StrokePathCache,
+} from "./stroke-path-cache";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
+const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const MIN_POINT_DISTANCE = 1;
 const DRAG_MOVE_THRESHOLD = 1;
 const HIT_TARGET_PADDING = 10;
@@ -311,6 +345,61 @@ interface NativeEdgePathOverride {
 	patchedPathData: string;
 }
 
+interface NativeCanvasViewport {
+	getViewportBBox?: () => StrokeBounds | null;
+}
+
+type CanvasViewWithCanvasViewport = CanvasTarget["view"] & {
+	canvas?: NativeCanvasViewport | null;
+};
+
+interface TiledRasterRenderRequest {
+	viewportBounds: StrokeBounds;
+	entries: RasterTileEntry[];
+	rasterViewportKey: string;
+}
+
+interface RasterTileCacheRecord {
+	key: string;
+	foreignObjectEl: SVGForeignObjectElement;
+	canvasEl: HTMLCanvasElement;
+	bounds: StrokeBounds;
+	strokeIds: string[];
+	strokeCount: number;
+	lastUsedAt: number;
+	isSetupComplete: boolean;
+	isSettingUp: boolean;
+	setupGeneration: number | null;
+	isRendered: boolean;
+	isRendering: boolean;
+}
+
+interface RasterTileRenderJob {
+	record: RasterTileCacheRecord;
+	strokeIndex: number;
+	currentFilter: string;
+	rasterScale: number;
+	renderGeneration: number;
+	context: CanvasRenderingContext2D | null;
+}
+
+interface RasterTileSetupJob {
+	entries: RasterTileEntry[];
+	records: RasterTileCacheRecord[];
+	range: RasterTileRange;
+	columnCount: number;
+	tileWorldSize: number;
+	rasterBounds: StrokeBounds;
+	screenScale: number;
+	strokeIndex: number;
+	renderGeneration: number;
+}
+
+interface RasterTileInvalidationGeometry {
+	bounds: StrokeBounds | null;
+	strokeWidth: number;
+}
+
 interface ToolbarPressState {
 	pointerId: number;
 	timeoutId: number;
@@ -362,8 +451,21 @@ export class DrawingLayer {
 	private drawingData: CanvasDrawingData = createEmptyDrawingData();
 	private readonly strokeById = new Map<string, CanvasStroke>();
 	private readonly strokeGroupById = new Map<string, SVGGElement>();
+	private readonly strokeBatchEls: SVGPathElement[] = [];
+	private readonly strokeRasterEls: SVGForeignObjectElement[] = [];
+	private readonly strokeRasterTileEls: SVGForeignObjectElement[] = [];
+	private readonly rasterTileCache = new Map<string, RasterTileCacheRecord>();
+	private readonly rasterTileRenderJobs: RasterTileRenderJob[] = [];
+	private readonly rasterTileSetupJobs: RasterTileSetupJob[] = [];
+	private rasterTileSetupFrameId: number | null = null;
+	private rasterTileRenderFrameId: number | null = null;
+	private rasterTileRenderGeneration = 0;
+	private rasterTileUsageCounter = 0;
+	private readonly rasterRenderFrameIds = new Set<number>();
+	private rasterRenderGeneration = 0;
 	private readonly strokeBoundsById = new Map<string, StrokeBounds>();
 	private readonly strokeSpatialIndex = new StrokeSpatialIndex();
+	private readonly strokePathCache = new StrokePathCache();
 	private captureEl: HTMLDivElement | null = null;
 	private svgEl: SVGSVGElement | null = null;
 	private strokeInteractionEl: HTMLElement | null = null;
@@ -418,6 +520,12 @@ export class DrawingLayer {
 	private mutationObserver: MutationObserver | null = null;
 	private isObservingCanvasAttributes: boolean | null = null;
 	private domSyncFrameId: number | null = null;
+	private renderViewportObserver: MutationObserver | null = null;
+	private renderViewportObservedEl: HTMLElement | null = null;
+	private renderViewportFrameId: number | null = null;
+	private renderedStrokeIds: string[] = [];
+	private renderedSelectedStrokeIds: string[] = [];
+	private renderedRasterViewportKey = "";
 	private saveTimeoutId: number | null = null;
 	private hasPendingSave = false;
 	private positionedEl: HTMLElement | null = null;
@@ -497,7 +605,17 @@ export class DrawingLayer {
 			this.domSyncFrameId = null;
 		}
 
+		this.disconnectRenderViewportObserver();
+
+		if (this.renderViewportFrameId !== null) {
+			window.cancelAnimationFrame(this.renderViewportFrameId);
+			this.renderViewportFrameId = null;
+		}
+
 		this.cancelActiveStrokePreviewUpdate();
+		this.cancelPendingRasterRenders();
+		this.clearRasterTileCache();
+		this.strokePathCache.clear();
 
 		for (const dispose of this.renderDisposers.splice(0)) {
 			dispose();
@@ -590,6 +708,8 @@ export class DrawingLayer {
 		}
 
 		if (shouldRerenderStrokes) {
+			this.clearRasterTileCache();
+			this.strokePathCache.clear();
 			if (this.activeStroke) {
 				this.resetActiveStrokePreviewState();
 				this.updateActiveStrokePreview();
@@ -697,10 +817,15 @@ export class DrawingLayer {
 
 		if (svgEl.parentElement !== worldEl || worldEl.lastElementChild !== svgEl) {
 			worldEl.appendChild(svgEl);
+			shouldRender = true;
 		}
+
+		this.syncRenderViewportObserver(worldEl);
 
 		if (shouldRender) {
 			this.renderStrokes();
+		} else {
+			this.syncVisibleStrokeElements();
 		}
 
 		this.syncStrokeInteractionListeners();
@@ -2884,16 +3009,1343 @@ export class DrawingLayer {
 			return;
 		}
 
-		this.svgEl.replaceChildren();
-		this.strokeGroupById.clear();
-		this.selectionBoxEl = null;
-		this.selectionHandleEls.length = 0;
+		this.renderVisibleStrokeElements();
+		this.renderSelectionBox();
+	}
 
-		for (const stroke of this.drawingData.strokes) {
-			this.svgEl.appendChild(this.createStrokeGroupEl(stroke));
+	private syncRenderViewportObserver(worldEl: HTMLElement): void {
+		if (this.renderViewportObservedEl === worldEl) {
+			return;
 		}
 
-		this.renderSelectionBox();
+		this.disconnectRenderViewportObserver();
+
+		this.renderViewportObserver = new MutationObserver(() => this.scheduleRenderViewportSync());
+		this.renderViewportObserver.observe(worldEl, {
+			attributes: true,
+			attributeFilter: ["style"],
+		});
+		this.renderViewportObservedEl = worldEl;
+	}
+
+	private disconnectRenderViewportObserver(): void {
+		this.renderViewportObserver?.disconnect();
+		this.renderViewportObserver = null;
+		this.renderViewportObservedEl = null;
+	}
+
+	private scheduleRenderViewportSync(): void {
+		if (this.renderViewportFrameId !== null) {
+			return;
+		}
+
+		this.renderViewportFrameId = window.requestAnimationFrame(() => {
+			this.renderViewportFrameId = null;
+			this.syncVisibleStrokeElements();
+
+			if (this.selectedStrokeIds.size > 0 && !this.dragState && !this.resizeState && !this.nativeSelectionDragState) {
+				this.renderSelectionBox();
+			}
+		});
+	}
+
+	private renderVisibleStrokeElements(): void {
+		if (!this.svgEl) {
+			return;
+		}
+
+		const tiledRasterRequest = this.getTiledRasterRenderRequest();
+
+		if (tiledRasterRequest) {
+			this.renderTiledRasterStrokeElements(tiledRasterRequest);
+			return;
+		}
+
+		this.renderVisibleStrokeIds(this.getVisibleStrokeIds());
+	}
+
+	private renderVisibleStrokeIds(visibleStrokeIds: readonly string[]): void {
+		if (!this.svgEl) {
+			return;
+		}
+
+		this.clearRenderedStrokeElements();
+		const renderResult = this.createStrokeRenderFragment(visibleStrokeIds);
+		this.svgEl.insertBefore(renderResult.fragment, this.getStrokeRenderAnchor());
+		this.renderedStrokeIds = [...visibleStrokeIds];
+		this.renderedSelectedStrokeIds = this.getVisibleSelectedStrokeIds(visibleStrokeIds);
+		this.renderedRasterViewportKey = renderResult.rasterViewportKey;
+	}
+
+	private renderTiledRasterStrokeElements(request: TiledRasterRenderRequest): void {
+		if (!this.svgEl) {
+			return;
+		}
+
+		this.clearRenderedStrokeElements();
+		this.svgEl.insertBefore(this.createStrokeTiledRasterRenderFragment(request), this.getStrokeRenderAnchor());
+		this.renderedStrokeIds = [];
+		this.renderedSelectedStrokeIds = [];
+		this.renderedRasterViewportKey = request.rasterViewportKey;
+	}
+
+	private syncVisibleStrokeElements(): void {
+		if (!this.svgEl) {
+			return;
+		}
+
+		const tiledRasterRequest = this.getTiledRasterRenderRequest();
+
+		if (tiledRasterRequest) {
+			if (!this.areRenderedTiledRasterElementsCurrent(tiledRasterRequest)) {
+				this.renderTiledRasterStrokeElements(tiledRasterRequest);
+			}
+
+			return;
+		}
+
+		const visibleStrokeIds = this.getVisibleStrokeIds();
+
+		if (this.areRenderedStrokeIdsCurrent(visibleStrokeIds)) {
+			return;
+		}
+
+		this.renderVisibleStrokeIds(visibleStrokeIds);
+	}
+
+	private areRenderedTiledRasterElementsCurrent(request: TiledRasterRenderRequest): boolean {
+		return this.strokeRasterTileEls.length === request.entries.length
+			&& this.strokeRasterTileEls.length > 0
+			&& this.strokeGroupById.size === 0
+			&& this.strokeBatchEls.length === 0
+			&& this.strokeRasterEls.length === 0
+			&& this.strokeRasterTileEls.every((tileEl) => tileEl.isConnected)
+			&& this.renderedRasterViewportKey === request.rasterViewportKey;
+	}
+
+	private areRenderedStrokeIdsCurrent(visibleStrokeIds: readonly string[]): boolean {
+		const visibleSelectedStrokeIds = this.getVisibleSelectedStrokeIds(visibleStrokeIds);
+		const currentRasterViewportKey = this.getCurrentRasterViewportKey();
+
+		return areIdOrdersEqual(this.renderedStrokeIds, visibleStrokeIds)
+			&& areIdOrdersEqual(this.renderedSelectedStrokeIds, visibleSelectedStrokeIds)
+			&& visibleSelectedStrokeIds.every((strokeId) => Boolean(this.findStrokeGroupEl(strokeId)))
+			&& this.strokeBatchEls.every((batchEl) => batchEl.isConnected)
+			&& this.strokeRasterEls.every((rasterEl) => rasterEl.isConnected)
+			&& this.strokeRasterTileEls.every((tileEl) => tileEl.isConnected)
+			&& this.renderedRasterViewportKey === currentRasterViewportKey;
+	}
+
+	private getVisibleSelectedStrokeIds(visibleStrokeIds: readonly string[]): string[] {
+		return visibleStrokeIds.filter((strokeId) => this.selectedStrokeIds.has(strokeId));
+	}
+
+	private getCurrentRasterViewportKey(): string {
+		const viewportBounds = this.getRenderViewportBounds();
+
+		if (this.strokeRasterTileEls.length > 0) {
+			return this.getTiledRasterViewportKey(viewportBounds);
+		}
+
+		if (this.strokeRasterEls.length > 0) {
+			return this.getRasterViewportKey(viewportBounds);
+		}
+
+		return "";
+	}
+
+	private clearRenderedStrokeElements(): void {
+		this.cancelPendingRasterRenders();
+		for (const groupEl of this.strokeGroupById.values()) {
+			groupEl.remove();
+		}
+
+		this.strokeGroupById.clear();
+
+		for (const batchEl of this.strokeBatchEls.splice(0)) {
+			batchEl.remove();
+		}
+
+		for (const rasterEl of this.strokeRasterEls.splice(0)) {
+			rasterEl.remove();
+		}
+
+		for (const tileEl of this.strokeRasterTileEls.splice(0)) {
+			tileEl.remove();
+		}
+
+		this.renderedStrokeIds = [];
+		this.renderedSelectedStrokeIds = [];
+		this.renderedRasterViewportKey = "";
+	}
+
+	private cancelPendingRasterRenders(): void {
+		this.rasterRenderGeneration++;
+
+		for (const frameId of this.rasterRenderFrameIds) {
+			window.cancelAnimationFrame(frameId);
+		}
+
+		this.rasterRenderFrameIds.clear();
+	}
+
+	private requestRasterRenderFrame(callback: FrameRequestCallback): void {
+		const frameId = window.requestAnimationFrame((timestamp) => {
+			this.rasterRenderFrameIds.delete(frameId);
+			callback(timestamp);
+		});
+
+		this.rasterRenderFrameIds.add(frameId);
+	}
+
+	private cancelPendingRasterTileRenders(): void {
+		this.rasterTileRenderGeneration++;
+
+		if (this.rasterTileSetupFrameId !== null) {
+			window.cancelAnimationFrame(this.rasterTileSetupFrameId);
+			this.rasterTileSetupFrameId = null;
+		}
+
+		if (this.rasterTileRenderFrameId !== null) {
+			window.cancelAnimationFrame(this.rasterTileRenderFrameId);
+			this.rasterTileRenderFrameId = null;
+		}
+
+		for (const job of this.rasterTileSetupJobs.splice(0)) {
+			this.cancelRasterTileSetupJob(job);
+		}
+
+		for (const job of this.rasterTileRenderJobs.splice(0)) {
+			if (job.context) {
+				this.resetRasterCanvasContext(job.context);
+			}
+
+			job.record.isRendering = false;
+		}
+	}
+
+	private clearRasterTileCache(): void {
+		this.cancelPendingRasterTileRenders();
+
+		for (const record of this.rasterTileCache.values()) {
+			record.foreignObjectEl.remove();
+		}
+
+		this.rasterTileCache.clear();
+		this.strokeRasterTileEls.length = 0;
+	}
+
+private invalidateRasterTilesForStroke(stroke: CanvasStroke): void {
+	this.invalidateRasterTilesForStrokeGeometries([{
+		bounds: this.getStrokeBounds(stroke),
+		strokeWidth: stroke.width,
+	}]);
+}
+
+private invalidateRasterTilesForStrokeGeometries(geometries: readonly RasterTileInvalidationGeometry[]): void {
+	if (this.rasterTileCache.size === 0) {
+		return;
+	}
+
+	const invalidationBounds = geometries
+		.map((geometry) => geometry.bounds
+			? getStrokeSpatialIndexBounds(geometry.bounds, geometry.strokeWidth)
+			: null)
+		.filter(isPresent);
+
+	if (invalidationBounds.length === 0) {
+		return;
+	}
+
+	if (this.hasPendingRasterTileWork()) {
+		this.clearRasterTileCache();
+		return;
+	}
+
+	for (const [key, record] of Array.from(this.rasterTileCache.entries())) {
+		if (!doRasterTileBoundsIntersectAny(record.bounds, invalidationBounds)) {
+			continue;
+		}
+
+		record.foreignObjectEl.remove();
+		this.rasterTileCache.delete(key);
+		removeItemInPlace(this.strokeRasterTileEls, record.foreignObjectEl);
+	}
+}
+
+private hasPendingRasterTileWork(): boolean {
+	return this.rasterTileSetupJobs.length > 0
+		|| this.rasterTileRenderJobs.length > 0
+		|| this.rasterTileSetupFrameId !== null
+		|| this.rasterTileRenderFrameId !== null;
+}
+
+	private scheduleRasterTileSetupQueue(): void {
+		if (this.rasterTileSetupFrameId !== null || this.rasterTileSetupJobs.length === 0) {
+			return;
+		}
+
+		this.rasterTileSetupFrameId = window.requestAnimationFrame(() => this.processRasterTileSetupQueue());
+	}
+
+	private processRasterTileSetupQueue(): void {
+		this.rasterTileSetupFrameId = null;
+		const frameStartTime = performance.now();
+		let checkedStrokeCount = 0;
+
+		while (this.rasterTileSetupJobs.length > 0) {
+			const job = this.rasterTileSetupJobs[0];
+
+			if (!job) {
+				break;
+			}
+
+			if (job.renderGeneration !== this.rasterTileRenderGeneration) {
+				this.cancelRasterTileSetupJob(job);
+				this.rasterTileSetupJobs.shift();
+				continue;
+			}
+
+			while (job.strokeIndex < this.drawingData.strokes.length) {
+				const stroke = this.drawingData.strokes[job.strokeIndex++];
+
+				if (stroke) {
+					this.addStrokeToRasterTileSetupJob(job, stroke);
+				}
+
+				checkedStrokeCount++;
+
+				if (checkedStrokeCount >= RASTER_TILE_SETUP_TIME_CHECK_INTERVAL) {
+					checkedStrokeCount = 0;
+
+					if (performance.now() - frameStartTime >= RASTER_TILE_SETUP_FRAME_BUDGET_MS) {
+						this.scheduleRasterTileSetupQueue();
+						return;
+					}
+				}
+			}
+
+			this.finishRasterTileSetupJob(job);
+			this.rasterTileSetupJobs.shift();
+		}
+
+		this.scheduleRasterTileSetupQueue();
+	}
+
+	private addStrokeToRasterTileSetupJob(job: RasterTileSetupJob, stroke: CanvasStroke): void {
+		if (stroke.id === this.activeStroke?.id) {
+			return;
+		}
+
+		const bounds = this.getStrokeBounds(stroke);
+
+		if (!bounds) {
+			return;
+		}
+
+		const spatialBounds = getStrokeSpatialIndexBounds(bounds, stroke.width);
+
+		if (!doBoundsIntersect(job.rasterBounds, spatialBounds)
+			|| !shouldRenderStrokeAtLevelOfDetail(spatialBounds, job.screenScale, false)) {
+			return;
+		}
+
+		const candidateRange = getRasterTileRange(spatialBounds, job.tileWorldSize);
+
+		for (let tileY = Math.max(candidateRange.minTileY, job.range.minTileY); tileY <= Math.min(candidateRange.maxTileY, job.range.maxTileY); tileY++) {
+			const rowOffset = (tileY - job.range.minTileY) * job.columnCount;
+
+			for (let tileX = Math.max(candidateRange.minTileX, job.range.minTileX); tileX <= Math.min(candidateRange.maxTileX, job.range.maxTileX); tileX++) {
+				const entryIndex = rowOffset + tileX - job.range.minTileX;
+				const entry = job.entries[entryIndex];
+				const record = job.records[entryIndex];
+
+				if (entry?.tileX === tileX
+					&& entry.tileY === tileY
+					&& record?.setupGeneration === job.renderGeneration
+					&& record.isSettingUp
+					&& !record.isSetupComplete
+					&& doBoundsIntersect(spatialBounds, entry.bounds)) {
+					record.strokeIds.push(stroke.id);
+				}
+			}
+		}
+	}
+
+	private finishRasterTileSetupJob(job: RasterTileSetupJob): void {
+		for (const record of new Set(job.records)) {
+			if (record.setupGeneration !== job.renderGeneration) {
+				continue;
+			}
+
+			record.isSettingUp = false;
+			record.setupGeneration = null;
+
+			if (job.renderGeneration !== this.rasterTileRenderGeneration || this.rasterTileCache.get(record.key) !== record) {
+				record.strokeIds = [];
+				record.strokeCount = 0;
+				record.foreignObjectEl.dataset.strokeCount = "0";
+				continue;
+			}
+
+			record.isSetupComplete = true;
+			record.strokeCount = record.strokeIds.length;
+			record.foreignObjectEl.dataset.strokeCount = record.strokeCount.toString();
+			record.isRendered = record.strokeIds.length === 0;
+
+			this.enqueueRasterTileRender(record);
+		}
+	}
+
+	private cancelRasterTileSetupJob(job: RasterTileSetupJob): void {
+		for (const record of new Set(job.records)) {
+			if (record.setupGeneration !== job.renderGeneration) {
+				continue;
+			}
+
+			record.isSettingUp = false;
+			record.setupGeneration = null;
+
+			if (!record.isSetupComplete) {
+				record.strokeIds = [];
+				record.strokeCount = 0;
+				record.foreignObjectEl.dataset.strokeCount = "0";
+				record.isRendered = false;
+			}
+		}
+	}
+
+	private scheduleRasterTileRenderQueue(): void {
+		if (this.rasterTileRenderFrameId !== null || this.rasterTileRenderJobs.length === 0) {
+			return;
+		}
+
+		this.rasterTileRenderFrameId = window.requestAnimationFrame(() => this.processRasterTileRenderQueue());
+	}
+
+	private processRasterTileRenderQueue(): void {
+		this.rasterTileRenderFrameId = null;
+		const frameStartTime = performance.now();
+		let checkedStrokeCount = 0;
+
+		while (this.rasterTileRenderJobs.length > 0) {
+			const job = this.rasterTileRenderJobs[0];
+
+			if (!job) {
+				break;
+			}
+
+			if (job.renderGeneration !== this.rasterTileRenderGeneration) {
+				this.finishRasterTileRenderJob(job);
+				this.rasterTileRenderJobs.shift();
+				continue;
+			}
+
+			if (!job.context) {
+				job.context = this.prepareRasterCanvasContext(job.record.canvasEl, job.record.bounds, job.rasterScale);
+
+				if (!job.context) {
+					job.record.isRendering = false;
+					this.rasterTileRenderJobs.shift();
+					continue;
+				}
+			}
+
+			while (job.strokeIndex < job.record.strokeIds.length) {
+				const strokeId = job.record.strokeIds[job.strokeIndex++];
+
+				if (strokeId) {
+					const stroke = this.findStroke(strokeId);
+
+					if (stroke) {
+						job.currentFilter = this.drawStrokeOnPreparedRasterCanvas(job.context, stroke, job.currentFilter);
+					}
+				}
+
+				checkedStrokeCount++;
+
+				if (checkedStrokeCount >= RASTER_RENDER_TIME_CHECK_INTERVAL) {
+					checkedStrokeCount = 0;
+
+					if (performance.now() - frameStartTime >= RASTER_RENDER_FRAME_BUDGET_MS) {
+						this.scheduleRasterTileRenderQueue();
+						return;
+					}
+				}
+			}
+
+			this.finishRasterTileRenderJob(job);
+			this.rasterTileRenderJobs.shift();
+		}
+
+		this.scheduleRasterTileRenderQueue();
+	}
+
+	private finishRasterTileRenderJob(job: RasterTileRenderJob): void {
+		if (job.context) {
+			this.resetRasterCanvasContext(job.context);
+			job.context = null;
+		}
+
+		job.record.isRendering = false;
+		job.record.isRendered = job.renderGeneration === this.rasterTileRenderGeneration;
+	}
+
+	private getVisibleStrokeIds(): string[] {
+		const viewportBounds = this.getRenderViewportBounds();
+
+		if (!viewportBounds) {
+			return this.drawingData.strokes
+				.map((stroke) => stroke.id)
+				.filter((strokeId) => strokeId !== this.activeStroke?.id);
+		}
+
+		const renderBounds = expandStrokeRenderViewportBounds(viewportBounds);
+		const visibleStrokeIds: string[] = [];
+		const screenScale = this.getCanvasScreenScale();
+
+		for (const strokeId of this.strokeSpatialIndex.queryBounds(renderBounds, "ascending")) {
+			if (strokeId === this.activeStroke?.id) {
+				continue;
+			}
+
+			const stroke = this.findStroke(strokeId);
+			const bounds = stroke ? this.getStrokeBounds(stroke) : null;
+
+			if (!stroke || !bounds) {
+				continue;
+			}
+
+			if (shouldRenderStrokeAtLevelOfDetail(
+				getStrokeSpatialIndexBounds(bounds, stroke.width),
+				screenScale,
+				this.selectedStrokeIds.has(strokeId),
+			)) {
+				visibleStrokeIds.push(strokeId);
+			}
+		}
+
+		return visibleStrokeIds;
+	}
+
+	private shouldRenderStroke(stroke: CanvasStroke): boolean {
+		if (stroke.id === this.activeStroke?.id) {
+			return false;
+		}
+
+		const viewportBounds = this.getRenderViewportBounds();
+
+		if (!viewportBounds) {
+			return true;
+		}
+
+		const bounds = this.getStrokeBounds(stroke);
+
+		if (!bounds) {
+			return false;
+		}
+
+		const spatialBounds = getStrokeSpatialIndexBounds(bounds, stroke.width);
+
+		if (!shouldRenderStrokeAtLevelOfDetail(
+			spatialBounds,
+			this.getCanvasScreenScale(),
+			this.selectedStrokeIds.has(stroke.id),
+		)) {
+			return false;
+		}
+
+		return filterVisibleStrokeIds(
+			[stroke.id],
+			expandStrokeRenderViewportBounds(viewportBounds),
+			() => spatialBounds,
+		).length > 0;
+	}
+
+	private getRenderViewportBounds(): StrokeBounds | null {
+		const nativeCanvas = (this.target.view as CanvasViewWithCanvasViewport).canvas;
+		const nativeViewportBounds = nativeCanvas?.getViewportBBox?.();
+
+		if (nativeViewportBounds && isFiniteBounds(nativeViewportBounds)) {
+			return nativeViewportBounds;
+		}
+
+		return this.getSvgScreenViewportBounds();
+	}
+
+	private getSvgScreenViewportBounds(): StrokeBounds | null {
+		if (!this.svgEl) {
+			return null;
+		}
+
+		const matrix = this.svgEl.getScreenCTM();
+
+		if (!matrix) {
+			return null;
+		}
+
+		const rect = this.svgEl.getBoundingClientRect();
+		const inverseMatrix = matrix.inverse();
+		const point = this.svgEl.createSVGPoint();
+		const corners = [
+			{x: rect.left, y: rect.top},
+			{x: rect.right, y: rect.top},
+			{x: rect.left, y: rect.bottom},
+			{x: rect.right, y: rect.bottom},
+		].map((corner) => {
+			point.x = corner.x;
+			point.y = corner.y;
+			return point.matrixTransform(inverseMatrix);
+		});
+
+		return {
+			minX: Math.min(...corners.map((corner) => corner.x)),
+			minY: Math.min(...corners.map((corner) => corner.y)),
+			maxX: Math.max(...corners.map((corner) => corner.x)),
+			maxY: Math.max(...corners.map((corner) => corner.y)),
+		};
+	}
+
+	private getStrokeRenderAnchor(): ChildNode | null {
+		if (this.activeStrokeGroupEl?.isConnected) {
+			return this.activeStrokeGroupEl;
+		}
+
+		if (this.selectionBoxEl?.isConnected) {
+			return this.selectionBoxEl;
+		}
+
+		return this.selectionHandleEls.find((handleEl) => handleEl.isConnected) ?? null;
+	}
+
+	private getTiledRasterRenderRequest(): TiledRasterRenderRequest | null {
+		const viewportBounds = this.getRenderViewportBounds();
+
+		if (!viewportBounds || this.selectedStrokeIds.size > 0) {
+			return null;
+		}
+
+		if (!this.hasTiledRasterStrokeCount(viewportBounds)) {
+			return null;
+		}
+
+		const entries = this.getRasterTileEntriesForViewport(viewportBounds);
+
+		if (entries.length === 0) {
+			return null;
+		}
+
+		return {
+			viewportBounds,
+			entries,
+			rasterViewportKey: this.getTiledRasterViewportKeyForEntries(entries),
+		};
+	}
+
+	private hasTiledRasterStrokeCount(viewportBounds: StrokeBounds): boolean {
+		const screenScale = this.getCanvasScreenScale();
+		const rasterBounds = expandRasterRenderViewportBounds(viewportBounds, screenScale);
+		let visibleStrokeCount = 0;
+
+		this.strokeSpatialIndex.forEachBounds(rasterBounds, (strokeId) => {
+			if (strokeId === this.activeStroke?.id) {
+				return;
+			}
+
+			const stroke = this.findStroke(strokeId);
+			const bounds = stroke ? this.getStrokeBounds(stroke) : null;
+
+			if (!stroke || !bounds) {
+				return;
+			}
+
+			if (shouldRenderStrokeAtLevelOfDetail(
+				getStrokeSpatialIndexBounds(bounds, stroke.width),
+				screenScale,
+				false,
+			)) {
+				visibleStrokeCount++;
+			}
+
+			return visibleStrokeCount <= TILED_RASTER_CACHE_STROKE_THRESHOLD;
+		});
+
+		return shouldUseTiledRasterCache(visibleStrokeCount, false);
+	}
+
+	private createStrokeRenderFragment(visibleStrokeIds: readonly string[]): {fragment: DocumentFragment; rasterViewportKey: string} {
+		const viewportBounds = this.getRenderViewportBounds();
+		const shouldRasterize = viewportBounds ? this.shouldRasterizeVisibleStrokes(visibleStrokeIds) : false;
+
+
+		if (viewportBounds && shouldRasterize) {
+			return {
+				fragment: this.createStrokeRasterRenderFragment(visibleStrokeIds, viewportBounds),
+				rasterViewportKey: this.getRasterViewportKey(viewportBounds),
+			};
+		}
+
+		const renderItems = getStrokeRenderItems(visibleStrokeIds.map((strokeId) => {
+			const stroke = this.findStroke(strokeId);
+
+			return {
+				id: strokeId,
+				batchKey: stroke ? this.getStrokeRenderBatchKey(stroke) : null,
+				isSelected: this.selectedStrokeIds.has(strokeId),
+			};
+		}));
+
+		return {
+			fragment: this.createStrokeSvgRenderFragment(renderItems),
+			rasterViewportKey: "",
+		};
+	}
+
+	private shouldRasterizeVisibleStrokes(visibleStrokeIds: readonly string[]): boolean {
+		let estimatedSvgElementCount = 0;
+		let pendingBatchKey: string | null = null;
+		let hasPendingBatch = false;
+
+		const flushPendingBatch = (): boolean => {
+			if (!hasPendingBatch) {
+				return false;
+			}
+
+			estimatedSvgElementCount++;
+			pendingBatchKey = null;
+			hasPendingBatch = false;
+			return shouldUseRasterStrokeRenderer(estimatedSvgElementCount);
+		};
+
+		for (const strokeId of visibleStrokeIds) {
+			const stroke = this.findStroke(strokeId);
+			const batchKey = stroke && !this.selectedStrokeIds.has(strokeId)
+				? this.getStrokeRenderBatchKey(stroke)
+				: null;
+
+			if (batchKey === null) {
+				if (flushPendingBatch()) {
+					return true;
+				}
+
+				estimatedSvgElementCount++;
+
+				if (shouldUseRasterStrokeRenderer(estimatedSvgElementCount)) {
+					return true;
+				}
+
+				continue;
+			}
+
+			if (pendingBatchKey !== null && pendingBatchKey !== batchKey && flushPendingBatch()) {
+				return true;
+			}
+
+			pendingBatchKey = batchKey;
+			hasPendingBatch = true;
+		}
+
+		return flushPendingBatch() || shouldUseRasterStrokeRenderer(estimatedSvgElementCount);
+	}
+
+	private createStrokeSvgRenderFragment(renderItems: ReturnType<typeof getStrokeRenderItems>): DocumentFragment {
+		const fragment = document.createDocumentFragment();
+
+		for (const item of renderItems) {
+			if (item.type === "single") {
+				const stroke = this.findStroke(item.strokeId);
+
+				if (stroke) {
+					fragment.appendChild(this.createStrokeGroupEl(stroke));
+				}
+
+				continue;
+			}
+
+			const strokes = item.strokeIds
+				.map((strokeId) => this.findStroke(strokeId))
+				.filter(isPresent);
+
+			if (strokes.length === 0) {
+				continue;
+			}
+
+			const firstStroke = strokes[0];
+
+			if (strokes.length === 1 && firstStroke) {
+				fragment.appendChild(this.createStrokeGroupEl(firstStroke));
+				continue;
+			}
+
+			fragment.appendChild(this.createStrokeBatchPathEl(strokes));
+		}
+
+		return fragment;
+	}
+
+	private createStrokeTiledRasterRenderFragment(request: TiledRasterRenderRequest): DocumentFragment {
+		const fragment = document.createDocumentFragment();
+		const visibleTileKeys = new Set<string>();
+		const records: RasterTileCacheRecord[] = [];
+		const recordsNeedingSetup: RasterTileCacheRecord[] = [];
+
+		for (const entry of request.entries) {
+			let record = this.rasterTileCache.get(entry.key);
+
+			if (!record) {
+				record = this.createRasterTileCacheRecord(entry, [], false);
+				this.rasterTileCache.set(record.key, record);
+			}
+
+			if (!record.isSetupComplete && !record.isSettingUp) {
+				recordsNeedingSetup.push(record);
+			}
+
+			records.push(record);
+			record.lastUsedAt = ++this.rasterTileUsageCounter;
+			visibleTileKeys.add(record.key);
+			fragment.appendChild(record.foreignObjectEl);
+			this.strokeRasterTileEls.push(record.foreignObjectEl);
+		}
+
+		this.setupRasterTileRecords(request, records, recordsNeedingSetup);
+		this.evictRasterTileCache(visibleTileKeys);
+		return fragment;
+	}
+
+	private setupRasterTileRecords(
+		request: TiledRasterRenderRequest,
+		records: readonly RasterTileCacheRecord[],
+		recordsNeedingSetup: readonly RasterTileCacheRecord[],
+	): void {
+		if (recordsNeedingSetup.length === 0) {
+			return;
+		}
+
+		if (recordsNeedingSetup.length === request.entries.length) {
+			this.enqueueRasterTileSetup(request, records);
+			return;
+		}
+
+		for (const record of recordsNeedingSetup) {
+			this.completeRasterTileSetupRecord(record, this.getRasterTileStrokeIds(record.bounds));
+		}
+	}
+
+	private enqueueRasterTileSetup(
+		request: TiledRasterRenderRequest,
+		records: readonly RasterTileCacheRecord[],
+	): void {
+		const firstEntry = request.entries[0];
+
+		if (!firstEntry) {
+			return;
+		}
+
+		const tileWorldSize = firstEntry.bounds.maxX - firstEntry.bounds.minX;
+
+		if (!Number.isFinite(tileWorldSize) || tileWorldSize <= 0) {
+			return;
+		}
+
+		const range = getRasterTileEntriesRange(request.entries);
+		const columnCount = range.maxTileX - range.minTileX + 1;
+
+		if (!Number.isFinite(columnCount) || columnCount <= 0) {
+			return;
+		}
+
+		for (const record of records) {
+			if (record.isSetupComplete || record.isSettingUp) {
+				continue;
+			}
+
+			record.strokeIds = [];
+			record.strokeCount = 0;
+			record.foreignObjectEl.dataset.strokeCount = "0";
+			record.isRendered = false;
+			record.isRendering = false;
+			record.isSettingUp = true;
+			record.setupGeneration = this.rasterTileRenderGeneration;
+		}
+
+		this.rasterTileSetupJobs.push({
+			entries: [...request.entries],
+			records: [...records],
+			range,
+			columnCount,
+			tileWorldSize,
+			rasterBounds: expandRasterRenderViewportBounds(request.viewportBounds, this.getCanvasScreenScale()),
+			screenScale: this.getCanvasScreenScale(),
+			strokeIndex: 0,
+			renderGeneration: this.rasterTileRenderGeneration,
+		});
+		this.scheduleRasterTileSetupQueue();
+	}
+
+	private getRasterTileEntriesForViewport(viewportBounds: StrokeBounds): RasterTileEntry[] {
+		const screenScale = this.getCanvasScreenScale();
+		const rasterScale = this.getRasterBitmapScale();
+		const tileWorldSize = getRasterTileWorldSize(screenScale);
+		const rasterBounds = expandRasterRenderViewportBounds(viewportBounds, screenScale);
+		return getRasterTileEntries(rasterBounds, tileWorldSize, rasterScale);
+	}
+
+	private getTiledRasterViewportKey(viewportBounds: StrokeBounds | null): string {
+		return viewportBounds ? this.getTiledRasterViewportKeyForEntries(this.getRasterTileEntriesForViewport(viewportBounds)) : "";
+	}
+
+	private getTiledRasterViewportKeyForEntries(entries: readonly RasterTileEntry[]): string {
+		const firstEntry = entries[0];
+		const lastEntry = entries[entries.length - 1];
+
+		if (!firstEntry || !lastEntry) {
+			return "";
+		}
+
+		return ["tiles", firstEntry.key, lastEntry.key, entries.length].join("|");
+	}
+
+
+	private createRasterTileCacheRecord(
+		entry: RasterTileEntry,
+		strokeIds: readonly string[],
+		isSetupComplete = true,
+	): RasterTileCacheRecord {
+		const foreignObjectEl = document.createElementNS(SVG_NS, "foreignObject");
+		const canvasEl = document.createElementNS(XHTML_NS, "canvas") as HTMLCanvasElement;
+		const width = Math.max(1, entry.bounds.maxX - entry.bounds.minX);
+		const height = Math.max(1, entry.bounds.maxY - entry.bounds.minY);
+		const rasterScale = this.getRasterBitmapScale();
+		const tileStrokeIds = [...strokeIds];
+
+		foreignObjectEl.classList.add("draw-in-canvas-stroke-raster", "draw-in-canvas-stroke-raster-tile");
+		foreignObjectEl.setAttribute("x", roundCoordinate(entry.bounds.minX).toString());
+		foreignObjectEl.setAttribute("y", roundCoordinate(entry.bounds.minY).toString());
+		foreignObjectEl.setAttribute("width", roundCoordinate(width).toString());
+		foreignObjectEl.setAttribute("height", roundCoordinate(height).toString());
+		foreignObjectEl.setAttribute("pointer-events", "none");
+		foreignObjectEl.dataset.tileKey = entry.key;
+		foreignObjectEl.dataset.strokeCount = tileStrokeIds.length.toString();
+
+		canvasEl.classList.add("draw-in-canvas-stroke-raster-canvas");
+		canvasEl.width = Math.max(1, Math.ceil(width * rasterScale));
+		canvasEl.height = Math.max(1, Math.ceil(height * rasterScale));
+		canvasEl.setAttribute("aria-hidden", "true");
+		foreignObjectEl.appendChild(canvasEl);
+
+		return {
+			key: entry.key,
+			foreignObjectEl,
+			canvasEl,
+			bounds: entry.bounds,
+			strokeIds: tileStrokeIds,
+			strokeCount: tileStrokeIds.length,
+			lastUsedAt: ++this.rasterTileUsageCounter,
+			isSetupComplete,
+			isSettingUp: false,
+			setupGeneration: null,
+			isRendered: isSetupComplete && tileStrokeIds.length === 0,
+			isRendering: false,
+		};
+	}
+
+	private completeRasterTileSetupRecord(record: RasterTileCacheRecord, strokeIds: readonly string[]): void {
+		record.strokeIds = [...strokeIds];
+		record.strokeCount = record.strokeIds.length;
+		record.foreignObjectEl.dataset.strokeCount = record.strokeCount.toString();
+		record.isSetupComplete = true;
+		record.isSettingUp = false;
+		record.setupGeneration = null;
+		record.isRendered = record.strokeIds.length === 0;
+		this.enqueueRasterTileRender(record);
+	}
+
+	private getRasterTileStrokeIds(bounds: StrokeBounds): string[] {
+		const screenScale = this.getCanvasScreenScale();
+
+		return this.strokeSpatialIndex.queryBounds(bounds, "ascending")
+			.filter((strokeId) => {
+				if (strokeId === this.activeStroke?.id) {
+					return false;
+				}
+
+				const stroke = this.findStroke(strokeId);
+				const strokeBounds = stroke ? this.getStrokeBounds(stroke) : null;
+
+				return Boolean(stroke && strokeBounds && shouldRenderStrokeAtLevelOfDetail(
+					getStrokeSpatialIndexBounds(strokeBounds, stroke.width),
+					screenScale,
+					false,
+				));
+			});
+	}
+
+	private enqueueRasterTileRender(record: RasterTileCacheRecord): void {
+		if (!record.isSetupComplete || record.isRendered || record.isRendering || record.strokeIds.length === 0) {
+			return;
+		}
+
+		record.isRendering = true;
+		this.rasterTileRenderJobs.push({
+			record,
+			strokeIndex: 0,
+			currentFilter: "none",
+			rasterScale: this.getRasterBitmapScale(),
+			renderGeneration: this.rasterTileRenderGeneration,
+			context: null,
+		});
+		this.scheduleRasterTileRenderQueue();
+	}
+
+	private evictRasterTileCache(visibleTileKeys: ReadonlySet<string>): void {
+		if (this.rasterTileCache.size <= MAX_RASTER_TILE_CACHE_TILES) {
+			return;
+		}
+
+		const removableRecords = Array.from(this.rasterTileCache.values())
+			.filter((record) => !visibleTileKeys.has(record.key) && !record.isRendering && !record.isSettingUp)
+			.sort((a, b) => a.lastUsedAt - b.lastUsedAt);
+
+		for (const record of removableRecords) {
+			if (this.rasterTileCache.size <= MAX_RASTER_TILE_CACHE_TILES) {
+				break;
+			}
+
+			record.foreignObjectEl.remove();
+			this.rasterTileCache.delete(record.key);
+		}
+	}
+
+	private createStrokeRasterRenderFragment(visibleStrokeIds: readonly string[], viewportBounds: StrokeBounds): DocumentFragment {
+		const fragment = document.createDocumentFragment();
+		const rasterBounds = expandRasterRenderViewportBounds(viewportBounds, this.getCanvasScreenScale());
+		const renderPlan = getStrokeRasterRenderPlan(visibleStrokeIds.map((strokeId) => ({
+			id: strokeId,
+			isSelected: this.selectedStrokeIds.has(strokeId),
+		})));
+
+		for (const item of renderPlan) {
+			if (item.type === "single") {
+				const stroke = this.findStroke(item.strokeId);
+
+				if (stroke) {
+					fragment.appendChild(this.createStrokeGroupEl(stroke));
+				}
+
+				continue;
+			}
+
+			const strokes = item.strokeIds
+				.map((strokeId) => this.findStroke(strokeId))
+				.filter(isPresent);
+
+			if (strokes.length > 0) {
+				fragment.appendChild(this.createStrokeRasterForeignObjectEl(strokes, rasterBounds));
+			}
+		}
+
+		return fragment;
+	}
+
+	private getRasterViewportKey(viewportBounds: StrokeBounds | null): string {
+		if (!viewportBounds) {
+			return "";
+		}
+
+		const rasterBounds = expandRasterRenderViewportBounds(viewportBounds, this.getCanvasScreenScale());
+		return [
+			roundCoordinate(rasterBounds.minX),
+			roundCoordinate(rasterBounds.minY),
+			roundCoordinate(rasterBounds.maxX),
+			roundCoordinate(rasterBounds.maxY),
+			roundCoordinate(this.getRasterBitmapScale()),
+		].join("|");
+	}
+
+	private createStrokeRasterForeignObjectEl(strokes: readonly CanvasStroke[], bounds: StrokeBounds): SVGForeignObjectElement {
+		const foreignObjectEl = document.createElementNS(SVG_NS, "foreignObject");
+		const canvasEl = document.createElementNS(XHTML_NS, "canvas") as HTMLCanvasElement;
+		const width = Math.max(1, bounds.maxX - bounds.minX);
+		const height = Math.max(1, bounds.maxY - bounds.minY);
+		const rasterScale = this.getRasterBitmapScale();
+
+		foreignObjectEl.classList.add("draw-in-canvas-stroke-raster");
+		foreignObjectEl.setAttribute("x", roundCoordinate(bounds.minX).toString());
+		foreignObjectEl.setAttribute("y", roundCoordinate(bounds.minY).toString());
+		foreignObjectEl.setAttribute("width", roundCoordinate(width).toString());
+		foreignObjectEl.setAttribute("height", roundCoordinate(height).toString());
+		foreignObjectEl.setAttribute("pointer-events", "none");
+		foreignObjectEl.dataset.strokeCount = strokes.length.toString();
+
+		canvasEl.classList.add("draw-in-canvas-stroke-raster-canvas");
+		canvasEl.width = Math.max(1, Math.ceil(width * rasterScale));
+		canvasEl.height = Math.max(1, Math.ceil(height * rasterScale));
+		canvasEl.setAttribute("aria-hidden", "true");
+		foreignObjectEl.appendChild(canvasEl);
+
+		const renderGeneration = this.rasterRenderGeneration;
+
+		if (shouldUseChunkedRasterStrokeRenderer(strokes.length)) {
+			this.renderStrokesToRasterCanvasChunked(canvasEl, bounds, strokes, rasterScale, renderGeneration);
+		} else {
+			this.renderStrokesToRasterCanvas(canvasEl, bounds, strokes, rasterScale);
+		}
+		this.strokeRasterEls.push(foreignObjectEl);
+		return foreignObjectEl;
+	}
+
+	private getRasterBitmapScale(): number {
+		const matrix = this.svgEl?.getScreenCTM();
+		const screenScale = matrix ? getSvgScreenScale(matrix) : 1;
+		return getRasterDevicePixelRatio(window.devicePixelRatio) * screenScale;
+	}
+
+	private renderStrokesToRasterCanvas(
+		canvasEl: HTMLCanvasElement,
+		bounds: StrokeBounds,
+		strokes: readonly CanvasStroke[],
+		rasterScale: number,
+	): void {
+		const context = this.prepareRasterCanvasContext(canvasEl, bounds, rasterScale);
+
+		if (!context) {
+			return;
+		}
+
+		let currentFilter = "none";
+
+		for (const stroke of strokes) {
+			currentFilter = this.drawStrokeOnPreparedRasterCanvas(context, stroke, currentFilter);
+		}
+
+		this.resetRasterCanvasContext(context);
+	}
+
+	private renderStrokesToRasterCanvasChunked(
+		canvasEl: HTMLCanvasElement,
+		bounds: StrokeBounds,
+		strokes: readonly CanvasStroke[],
+		rasterScale: number,
+		renderGeneration: number,
+	): void {
+		const context = this.prepareRasterCanvasContext(canvasEl, bounds, rasterScale);
+
+		if (!context) {
+			return;
+		}
+
+		let strokeIndex = 0;
+		let currentFilter = "none";
+
+		const drawChunk = (): void => {
+			if (renderGeneration !== this.rasterRenderGeneration) {
+				this.resetRasterCanvasContext(context);
+				return;
+			}
+
+			if (strokeIndex > 0 && !canvasEl.isConnected) {
+				this.resetRasterCanvasContext(context);
+				return;
+			}
+
+			const chunkStartTime = performance.now();
+			let checkedStrokeCount = 0;
+
+			while (strokeIndex < strokes.length) {
+				const stroke = strokes[strokeIndex++];
+
+				if (stroke) {
+					currentFilter = this.drawStrokeOnPreparedRasterCanvas(context, stroke, currentFilter);
+				}
+
+				checkedStrokeCount++;
+
+				if (checkedStrokeCount >= RASTER_RENDER_TIME_CHECK_INTERVAL) {
+					checkedStrokeCount = 0;
+
+					if (performance.now() - chunkStartTime >= RASTER_RENDER_FRAME_BUDGET_MS) {
+						this.requestRasterRenderFrame(drawChunk);
+						return;
+					}
+				}
+			}
+
+			this.resetRasterCanvasContext(context);
+		};
+
+		drawChunk();
+	}
+
+	private prepareRasterCanvasContext(
+		canvasEl: HTMLCanvasElement,
+		bounds: StrokeBounds,
+		rasterScale: number,
+	): CanvasRenderingContext2D | null {
+		const context = canvasEl.getContext("2d");
+
+		if (!context) {
+			return null;
+		}
+
+		context.setTransform(rasterScale, 0, 0, rasterScale, 0, 0);
+		context.clearRect(0, 0, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+		context.translate(-bounds.minX, -bounds.minY);
+		context.lineCap = "round";
+		context.lineJoin = "round";
+		context.filter = "none";
+
+		return context;
+	}
+
+	private drawStrokeOnPreparedRasterCanvas(
+		context: CanvasRenderingContext2D,
+		stroke: CanvasStroke,
+		currentFilter: string,
+	): string {
+		const blurRadius = getStrokeHardnessBlurRadius(stroke);
+		const nextFilter = blurRadius > 0 ? `blur(${blurRadius}px)` : "none";
+
+		if (nextFilter !== currentFilter) {
+			context.filter = nextFilter;
+		}
+
+		this.drawStrokeOnRasterCanvas(context, stroke);
+		return nextFilter;
+	}
+
+	private resetRasterCanvasContext(context: CanvasRenderingContext2D): void {
+		context.setTransform(1, 0, 0, 1, 0, 0);
+		context.globalAlpha = 1;
+		context.filter = "none";
+	}
+
+	private drawStrokeOnRasterCanvas(context: CanvasRenderingContext2D, stroke: CanvasStroke): void {
+		const hasPressure = strokeHasPressure(stroke);
+		const shouldUseHandwrittenPath = this.shouldUseHandwrittenStrokePath(stroke, hasPressure);
+		const opacity = normalizeStrokeOpacity(stroke.opacity) / 100;
+
+		context.globalAlpha = shouldUseHandwrittenPath ? opacity * 0.96 : opacity;
+
+		if (shouldUseHandwrittenPath) {
+			this.drawHandwrittenStrokeOnRasterCanvas(context, stroke, hasPressure);
+		} else {
+			this.drawLinearStrokeOnRasterCanvas(context, stroke);
+		}
+	}
+
+	private drawHandwrittenStrokeOnRasterCanvas(context: CanvasRenderingContext2D, stroke: CanvasStroke, hasPressure: boolean): void {
+		if (typeof Path2D === "undefined") {
+			return;
+		}
+
+		const pathCacheKey = createStrokePathCacheKey(stroke, {
+			kind: "handwritten",
+			settings: this.settings,
+			isComplete: true,
+			hasPressure,
+			isStart: true,
+			isEnd: true,
+		});
+		const path = this.strokePathCache.getRasterPath<Path2D | null>(stroke.id, pathCacheKey, () => {
+			const pathData = this.strokePathCache.getPathData(
+				stroke.id,
+				pathCacheKey,
+				() => this.createHandwrittenStrokeShapePath(stroke, true, hasPressure, true, true),
+			);
+
+			return pathData.length > 0 ? new Path2D(pathData) : null;
+		});
+
+		if (!path) {
+			return;
+		}
+
+		context.fillStyle = stroke.color;
+		context.fill(path);
+	}
+
+	private drawLinearStrokeOnRasterCanvas(context: CanvasRenderingContext2D, stroke: CanvasStroke): void {
+		const firstPoint = stroke.points[0];
+
+		if (!firstPoint || stroke.points.length < 2) {
+			return;
+		}
+
+		context.strokeStyle = stroke.color;
+		context.lineWidth = stroke.width;
+		context.beginPath();
+		context.moveTo(firstPoint.x, firstPoint.y);
+
+		for (let index = 1; index < stroke.points.length; index++) {
+			const point = stroke.points[index];
+
+			if (point) {
+				context.lineTo(point.x, point.y);
+			}
+		}
+
+		context.stroke();
+	}
+
+	private createStrokeBatchPathEl(strokes: readonly CanvasStroke[]): SVGPathElement {
+		const pathEl = document.createElementNS(SVG_NS, "path");
+		const firstStroke = strokes[0];
+
+		pathEl.classList.add("draw-in-canvas-stroke", "draw-in-canvas-stroke-batch");
+		pathEl.setAttribute("pointer-events", "none");
+		pathEl.dataset.strokeCount = strokes.length.toString();
+
+		if (!firstStroke) {
+			return pathEl;
+		}
+
+		const hasPressure = strokeHasPressure(firstStroke);
+		const shouldUseHandwrittenPath = this.shouldUseHandwrittenStrokePath(firstStroke, hasPressure);
+		const pathData = strokes
+			.map((stroke) => this.getStrokeRenderPathData(stroke, true))
+			.filter((path) => path.length > 0)
+			.join(" ");
+
+		pathEl.classList.toggle("mod-handwritten", shouldUseHandwrittenPath);
+		pathEl.setAttribute("opacity", formatStrokeOpacityRatio(firstStroke.opacity));
+		this.applyStrokeHardness(pathEl, firstStroke);
+		pathEl.setAttribute("d", pathData);
+
+		if (shouldUseHandwrittenPath) {
+			pathEl.setAttribute("fill", firstStroke.color);
+			pathEl.setAttribute("stroke", "none");
+			pathEl.removeAttribute("stroke-width");
+			pathEl.removeAttribute("stroke-linecap");
+			pathEl.removeAttribute("stroke-linejoin");
+		} else {
+			pathEl.setAttribute("stroke", firstStroke.color);
+			pathEl.setAttribute("stroke-width", firstStroke.width.toString());
+			pathEl.setAttribute("fill", "none");
+			pathEl.setAttribute("stroke-linecap", "round");
+			pathEl.setAttribute("stroke-linejoin", "round");
+		}
+
+		this.strokeBatchEls.push(pathEl);
+		return pathEl;
+	}
+
+	private getStrokeRenderBatchKey(stroke: CanvasStroke): string | null {
+		const hasPressure = strokeHasPressure(stroke);
+		return getStrokeRenderBatchKeyForStyle({
+			kind: this.shouldUseHandwrittenStrokePath(stroke, hasPressure) ? "handwritten" : "linear",
+			color: stroke.color,
+			opacity: formatStrokeOpacityRatio(stroke.opacity),
+			blurRadius: getStrokeHardnessBlurRadius(stroke),
+			width: stroke.width,
+		});
+	}
+
+	private getStrokeRenderPathData(stroke: CanvasStroke, isComplete: boolean): string {
+		const hasPressure = strokeHasPressure(stroke);
+		return this.shouldUseHandwrittenStrokePath(stroke, hasPressure)
+			? this.getHandwrittenStrokeShapePath(stroke, isComplete, hasPressure)
+			: this.getStrokeCenterPath(stroke);
 	}
 
 	private createStrokeGroupEl(stroke: CanvasStroke): SVGGElement {
@@ -2902,8 +4354,8 @@ export class DrawingLayer {
 		groupEl.classList.toggle("is-selected", this.selectedStrokeIds.has(stroke.id));
 		groupEl.dataset.strokeId = stroke.id;
 
+		// Hit testing uses the spatial index plus geometry checks; avoid a second transparent SVG path per stroke.
 		groupEl.appendChild(this.createPathEl(stroke));
-		groupEl.appendChild(this.createHitPathEl(stroke));
 		this.strokeGroupById.set(stroke.id, groupEl);
 		return groupEl;
 	}
@@ -2938,7 +4390,7 @@ export class DrawingLayer {
 			return;
 		}
 
-		pathEl.setAttribute("d", this.getStrokeCenterPath(stroke));
+		pathEl.setAttribute("d", this.getStrokeCenterPath(stroke, isComplete));
 		pathEl.setAttribute("stroke", stroke.color);
 		pathEl.setAttribute("stroke-width", stroke.width.toString());
 		pathEl.setAttribute("fill", "none");
@@ -2953,26 +4405,25 @@ export class DrawingLayer {
 	}
 
 
-	private createHitPathEl(stroke: CanvasStroke): SVGPathElement {
-		const pathEl = document.createElementNS(SVG_NS, "path");
-		pathEl.classList.add("draw-in-canvas-stroke-hit");
-		pathEl.setAttribute("d", this.getStrokeCenterPath(stroke));
-		pathEl.setAttribute("stroke", "transparent");
-		pathEl.setAttribute("stroke-width", Math.max(stroke.width + HIT_TARGET_PADDING, 12).toString());
-		pathEl.setAttribute("fill", "none");
-		pathEl.setAttribute("stroke-linecap", "round");
-		pathEl.setAttribute("stroke-linejoin", "round");
-		pathEl.setAttribute("pointer-events", "stroke");
-		return pathEl;
-	}
-
-
 	private shouldUseHandwrittenStrokePath(stroke: CanvasStroke, hasPressure = strokeHasPressure(stroke)): boolean {
 		return this.settings.beautifulStrokes || hasPressure;
 	}
 
-	private getStrokeCenterPath(stroke: CanvasStroke): string {
-		return pointsToSvgPath(stroke.points, {smooth: this.settings.beautifulStrokes});
+	private getStrokeCenterPath(stroke: CanvasStroke, useCache = true): string {
+		if (!useCache) {
+			return pointsToSvgPath(stroke.points, {smooth: this.settings.beautifulStrokes});
+		}
+
+		const pathCacheKey = createStrokePathCacheKey(stroke, {
+			kind: "linear",
+			settings: this.settings,
+		});
+
+		return this.strokePathCache.getPathData(
+			stroke.id,
+			pathCacheKey,
+			() => pointsToSvgPath(stroke.points, {smooth: this.settings.beautifulStrokes}),
+		);
 	}
 
 	private getHandwrittenStrokeShapePath(
@@ -2983,6 +4434,34 @@ export class DrawingLayer {
 	): string {
 		const isStart = options.isStart ?? true;
 		const isEnd = options.isEnd ?? true;
+
+		if (!isComplete || !isStart || !isEnd) {
+			return this.createHandwrittenStrokeShapePath(stroke, isComplete, hasPressure, isStart, isEnd);
+		}
+
+		const pathCacheKey = createStrokePathCacheKey(stroke, {
+			kind: "handwritten",
+			settings: this.settings,
+			isComplete,
+			hasPressure,
+			isStart,
+			isEnd,
+		});
+
+		return this.strokePathCache.getPathData(
+			stroke.id,
+			pathCacheKey,
+			() => this.createHandwrittenStrokeShapePath(stroke, isComplete, hasPressure, isStart, isEnd),
+		);
+	}
+
+	private createHandwrittenStrokeShapePath(
+		stroke: CanvasStroke,
+		isComplete: boolean,
+		hasPressure: boolean,
+		isStart: boolean,
+		isEnd: boolean,
+	): string {
 		const outlinePoints = getStroke(stroke.points, {
 			size: stroke.width,
 			thinning: this.settings.strokeThinning,
@@ -3338,7 +4817,7 @@ export class DrawingLayer {
 		pathEl.setAttribute("pointer-events", "none");
 		pathEl.setAttribute("opacity", formatStrokeOpacityRatio(stroke.opacity));
 		this.applyStrokeHardness(pathEl, stroke);
-		pathEl.setAttribute("d", this.getStrokeCenterPath(stroke));
+		pathEl.setAttribute("d", this.getStrokeCenterPath(stroke, false));
 		pathEl.setAttribute("stroke", stroke.color);
 		pathEl.setAttribute("stroke-width", stroke.width.toString());
 		pathEl.setAttribute("fill", "none");
@@ -4604,7 +6083,13 @@ export class DrawingLayer {
 		}
 
 		const resizeHandle = this.findResizeHandleAtPoint(point);
-		this.setInteractionCursor(resizeHandle ? getResizeHandleCursor(resizeHandle) : null);
+
+		if (resizeHandle) {
+			this.setInteractionCursor(getResizeHandleCursor(resizeHandle));
+			return;
+		}
+
+		this.setInteractionCursor(this.findStrokeAtPoint(point) ? "move" : null);
 	}
 
 	private setInteractionCursor(cursor: string | null): void {
@@ -4633,7 +6118,7 @@ export class DrawingLayer {
 		if (hasSelectionModifier(event)) {
 			if (isSelected) {
 				this.selectedStrokeIds.delete(stroke.id);
-				this.syncSelectedStrokeElement(stroke.id);
+				this.syncVisibleStrokeElements();
 				this.renderSelectionBox();
 				return;
 			}
@@ -5008,6 +6493,7 @@ export class DrawingLayer {
 
 	private readonly handleWindowResize = (): void => {
 		this.scheduleCanvasDomSync();
+		this.scheduleRenderViewportSync();
 	};
 
 	private readonly handleCanvasUndoPointerDown = (event: PointerEvent): void => {
@@ -5096,6 +6582,7 @@ export class DrawingLayer {
 			completedStroke.points.push(dotEndPoint);
 		}
 
+		this.strokePathCache.invalidateStroke(completedStroke.id);
 		const completedBounds = this.setStrokeBounds(completedStroke);
 
 		if (completedBounds) {
@@ -5104,19 +6591,24 @@ export class DrawingLayer {
 				getStrokeSpatialIndexBounds(completedBounds, completedStroke.width),
 			);
 		}
-		this.activeStrokeGroupEl?.replaceWith(this.createStrokeGroupEl(completedStroke));
+		this.invalidateRasterTilesForStrokeGeometries([{
+			bounds: completedBounds,
+			strokeWidth: completedStroke.width,
+		}]);
+		const activeStrokeGroupEl = this.activeStrokeGroupEl;
 		this.activeStroke = null;
 		this.activeStrokeGroupEl = null;
 		this.activeStrokePathEl = null;
 		this.activeStrokePointerId = null;
 		this.activeStrokeHasPressure = false;
 		this.resetActiveStrokePreviewState();
+		activeStrokeGroupEl?.remove();
+		this.renderVisibleStrokeElements();
 		this.pushHistory({type: "add-stroke", stroke: cloneStroke(completedStroke)});
 		this.scheduleSave();
 	}
 
 	private selectStrokes(strokeIds: readonly string[]): void {
-		const previousSelectedStrokeIds = new Set(this.selectedStrokeIds);
 		this.selectedStrokeIds.clear();
 
 		for (const strokeId of strokeIds) {
@@ -5125,7 +6617,7 @@ export class DrawingLayer {
 			}
 		}
 
-		this.syncChangedSelectedStrokeElements(previousSelectedStrokeIds);
+		this.syncVisibleStrokeElements();
 		this.renderSelectionBox();
 
 		if (this.colorPaletteTarget !== "selection") {
@@ -5182,7 +6674,6 @@ export class DrawingLayer {
 	}
 
 	private renderSelectionBox(): void {
-		this.syncTinyControlScale();
 		this.removeSelectionOverlay();
 
 		const selection = this.getSelectedStrokeBounds();
@@ -5190,6 +6681,8 @@ export class DrawingLayer {
 		if (!this.svgEl || !selection) {
 			return;
 		}
+
+		this.syncTinyControlScale();
 
 		const outerBounds = expandBounds(selection.bounds, selection.padding);
 		const canvasUnitsPerPixel = this.getCanvasUnitsForScreenPixels(1);
@@ -5686,16 +7179,24 @@ export class DrawingLayer {
 		}
 
 		const existingGroupEl = this.findStrokeGroupEl(stroke.id);
-		const nextGroupEl = this.createStrokeGroupEl(stroke);
 
-		if (existingGroupEl) {
-			existingGroupEl.replaceWith(nextGroupEl);
-		} else {
-			this.svgEl.appendChild(nextGroupEl);
+		if (!this.shouldRenderStroke(stroke)) {
+			existingGroupEl?.remove();
+			this.strokeGroupById.delete(stroke.id);
+			this.renderVisibleStrokeElements();
+			return;
 		}
+
+		if (existingGroupEl && this.selectedStrokeIds.has(stroke.id)) {
+			existingGroupEl.replaceWith(this.createStrokeGroupEl(stroke));
+			return;
+		}
+
+		this.renderVisibleStrokeElements();
 	}
 
 	private updateStrokePaintAttributes(stroke: CanvasStroke): void {
+		this.invalidateRasterTilesForStroke(stroke);
 		const pathEl = this.findVisibleStrokePathEl(stroke.id);
 
 		if (!pathEl) {
@@ -5871,6 +7372,13 @@ export class DrawingLayer {
 	}
 
 	private removeStroke(strokeId: string): void {
+		const stroke = this.findStroke(strokeId);
+
+		if (stroke) {
+			this.invalidateRasterTilesForStroke(stroke);
+		}
+
+		this.strokePathCache.invalidateStroke(strokeId);
 		const strokeIndex = this.drawingData.strokes.findIndex((stroke) => stroke.id === strokeId);
 
 		if (strokeIndex !== -1) {
@@ -5897,6 +7405,8 @@ export class DrawingLayer {
 	}
 
 	private rebuildStrokeIndex(): void {
+		this.clearRasterTileCache();
+		this.strokePathCache.clear();
 		this.strokeById.clear();
 		this.strokeBoundsById.clear();
 		const spatialEntries: StrokeSpatialIndexEntry[] = [];
@@ -5934,20 +7444,36 @@ export class DrawingLayer {
 
 	private applyStrokeOrder(strokeIds: readonly string[]): void {
 		this.drawingData.strokes = orderItemsByIds(this.drawingData.strokes, strokeIds);
+		this.clearRasterTileCache();
 		this.strokeSpatialIndex.setOrder(this.getStrokeIds());
 	}
 
 	private addStroke(stroke: CanvasStroke): void {
+		this.strokePathCache.invalidateStroke(stroke.id);
 		this.drawingData.strokes.push(stroke);
 		this.strokeById.set(stroke.id, stroke);
 		const bounds = this.setStrokeBounds(stroke);
 
 		if (bounds) {
 			this.strokeSpatialIndex.set(stroke.id, getStrokeSpatialIndexBounds(bounds, stroke.width), this.drawingData.strokes.length - 1);
+
+			if (stroke !== this.activeStroke) {
+				this.invalidateRasterTilesForStrokeGeometries([{bounds, strokeWidth: stroke.width}]);
+			}
 		}
 	}
 
 	private removeStrokes(strokeIds: readonly string[]): void {
+		this.invalidateRasterTilesForStrokeGeometries(strokeIds
+			.map((strokeId): RasterTileInvalidationGeometry | null => {
+				const stroke = this.findStroke(strokeId);
+				return stroke ? {bounds: this.getStrokeBounds(stroke), strokeWidth: stroke.width} : null;
+			})
+			.filter(isPresent));
+
+		for (const strokeId of strokeIds) {
+			this.strokePathCache.invalidateStroke(strokeId);
+		}
 		const strokeIdSet = new Set(strokeIds);
 		this.drawingData.strokes = this.drawingData.strokes.filter((stroke) => !strokeIdSet.has(stroke.id));
 
@@ -5998,10 +7524,12 @@ export class DrawingLayer {
 	}
 
 	private translateStroke(stroke: CanvasStroke, delta: StrokePoint): void {
+		const previousBounds = this.strokeBoundsById.get(stroke.id) ?? this.setStrokeBounds(stroke);
+		const previousWidth = stroke.width;
+		this.strokePathCache.invalidateStroke(stroke.id);
 		translatePointsInPlace(stroke.points, delta);
 
-		const bounds = this.strokeBoundsById.get(stroke.id);
-		const nextBounds = bounds ? translateBounds(bounds, delta) : this.setStrokeBounds(stroke);
+		const nextBounds = previousBounds ? translateBounds(previousBounds, delta) : this.setStrokeBounds(stroke);
 
 		if (nextBounds) {
 			this.strokeBoundsById.set(stroke.id, nextBounds);
@@ -6009,14 +7537,21 @@ export class DrawingLayer {
 		} else {
 			this.strokeSpatialIndex.remove(stroke.id);
 		}
+
+		this.invalidateRasterTilesForStrokeGeometries([
+			{bounds: previousBounds, strokeWidth: previousWidth},
+			{bounds: nextBounds, strokeWidth: stroke.width},
+		]);
 	}
 
 	private scaleStroke(stroke: CanvasStroke, origin: StrokePoint, scale: number): void {
+		const previousBounds = this.strokeBoundsById.get(stroke.id) ?? this.setStrokeBounds(stroke);
+		const previousWidth = stroke.width;
+		this.strokePathCache.invalidateStroke(stroke.id);
 		scalePointsInPlace(stroke.points, origin, scale);
 		stroke.width = Math.max(MIN_SCALED_STROKE_WIDTH, roundCoordinate(stroke.width * scale));
 
-		const bounds = this.strokeBoundsById.get(stroke.id);
-		const nextBounds = bounds ? scaleBounds(bounds, origin, scale) : this.setStrokeBounds(stroke);
+		const nextBounds = previousBounds ? scaleBounds(previousBounds, origin, scale) : this.setStrokeBounds(stroke);
 
 		if (nextBounds) {
 			this.strokeBoundsById.set(stroke.id, nextBounds);
@@ -6024,6 +7559,11 @@ export class DrawingLayer {
 		} else {
 			this.strokeSpatialIndex.remove(stroke.id);
 		}
+
+		this.invalidateRasterTilesForStrokeGeometries([
+			{bounds: previousBounds, strokeWidth: previousWidth},
+			{bounds: nextBounds, strokeWidth: stroke.width},
+		]);
 	}
 
 	private applyStrokeDragTransform(dragState: StrokeDragState, delta: StrokePoint): void {
@@ -8118,7 +9658,6 @@ function mergeBounds(a: StrokeBounds, b: StrokeBounds): StrokeBounds {
 		maxY: Math.max(a.maxY, b.maxY),
 	};
 }
-
 function getBoundsFromPoints(a: StrokePoint, b: StrokePoint): StrokeBounds {
 	return {
 		minX: Math.min(a.x, b.x),
@@ -8160,6 +9699,14 @@ function getBoundsCenter(bounds: StrokeBounds): StrokePoint {
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, value));
+}
+
+function removeItemInPlace<T>(items: T[], item: T): void {
+	const index = items.indexOf(item);
+
+	if (index !== -1) {
+		items.splice(index, 1);
+	}
 }
 
 function getResizeHandlePoint(bounds: StrokeBounds, handle: ResizeHandle): StrokePoint {
@@ -8360,6 +9907,15 @@ function cloneHistoryAction(action: DrawingHistoryAction): DrawingHistoryAction 
 		default:
 			return assertNever(action);
 	}
+}
+
+function isFiniteBounds(bounds: StrokeBounds): boolean {
+	return Number.isFinite(bounds.minX)
+		&& Number.isFinite(bounds.minY)
+		&& Number.isFinite(bounds.maxX)
+		&& Number.isFinite(bounds.maxY)
+		&& bounds.minX <= bounds.maxX
+		&& bounds.minY <= bounds.maxY;
 }
 
 function assertNever(value: never): never {
