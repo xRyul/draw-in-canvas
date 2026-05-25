@@ -1,69 +1,43 @@
-# Draw in Canvas
+# Draw in Canvas for ObsidianMD
 
-Draw in Canvas is an Obsidian plugin prototype for drawing freehand strokes on top of `.canvas` files.
+Draw, sketch, and handwrite directly on top of Obsidian Canvas files.
 
-It keeps the canvas JSON compatible by storing strokes in a custom top-level `drawInCanvas` metadata property.
+Draw in Canvas adds a lightweight drawing layer to `.canvas` files while keeping the normal JSON Canvas data intact.
 
-## Development
+## Features
 
-Install dependencies:
+- **Draw on Canvas**: Add freehand strokes directly on top of Obsidian `.canvas` files.
+- **Mouse, touch, and stylus support**: Draw with normal pointer input; stylus pressure is used when available.
+- **Brush controls**: Pick color, size, opacity, and hardness from controls beside the canvas.
+- **Optional handwriting smoothing**: Enable smoother, tapered strokes when you want handwriting-style lines.
+- **Edit after drawing**: Select strokes to move, resize, recolor, restyle, or delete them.
+- **Multi-select**: Use marquee selection or `Shift` / `Ctrl` / `Cmd` to work with several strokes at once.
+- **Undo and redo**: Drawing actions work with standard shortcuts and the Canvas **Undo** / **Redo** buttons.
+- **Saved in the canvas file**: Drawings are stored in the same `.canvas` file under `drawInCanvas`.
+- **Local-only**: No network requests or external services.
 
-```bash
-pnpm install
-```
+## Other
 
-Build and copy the plugin into the WSL-mounted testing vault at `D:\plugin-testing-vault\`:
+- Adds a pencil button to the Canvas toolbar and drawing controls on the left.
+- `Esc` leaves drawing mode, `1` returns to select mode, and `Delete` / `Backspace` removes selected strokes.
+- The color picker includes presets, recent colors, hex input, and HSL/RGB/Lab controls. Use what you need; ignore the rest.
+- **Allow tiny canvas items** is optional. Enable it only if you need very small cards/drawings or closer zoom. It also adds quick scale and layer controls.
+- Large canvases should stay usable, but very dense drawings can still affect performance.
+- Obsidian can still open the canvas without this plugin, but plugin drawings are only visible when Draw in Canvas is enabled.
 
-```bash
-pnpm build
-```
 
-The build writes these files to:
+## Settings
 
-```text
-/mnt/d/plugin-testing-vault/.obsidian/plugins/draw-in-canvas/
-```
+- **Stroke color**: Default color for new strokes. Accepts CSS colors such as `#ff5a5f`, `red`, or `rgb(255, 90, 95)`.
+- **Stroke width**: Default width for new freehand strokes.
+- **Stroke hardness**: Softens stroke edges like brush hardness.
+- **Stroke opacity**: Controls stroke transparency.
+- **Handwritten strokes**: Enables smoother, pressure-aware strokes with tapered starts and ends.
+- **Pen cursor fallback**: Shows a plugin cursor while drawing with a stylus when the native cursor is hidden or unreliable.
+- **Allow tiny canvas items**: Lowers Obsidian's native Canvas size limit, enables closer zoom, and adds quick scale/layer controls.
 
-You can override the target vault with:
 
-```bash
-OBSIDIAN_TEST_VAULT=/mnt/d/another-vault pnpm build
-```
+## 🙏 Credits
 
-or, from WSL, with a Windows-style path:
-
-```bash
-OBSIDIAN_TEST_VAULT='D:\plugin-testing-vault' pnpm build
-```
-
-For watch mode:
-
-```bash
-pnpm dev
-```
-
-## Usage
-
-1. Open a `.canvas` file in Obsidian.
-2. Existing Draw in Canvas strokes are shown automatically.
-3. Use the pencil button in the right canvas controls, between **Canvas settings** and **Zoom in**, or run **Draw in Canvas: Toggle drawing mode on active canvas**.
-4. Select the color button in the left brush controls to open the stroke palette. Long-press the pencil button, or focus it and press `ArrowDown`, to open the same palette on the left. The palette has preset colors, a native color picker, a hex color field, generated shades for the chosen color, size, hardness, opacity, and a **Handwriting** toggle with advanced thinning, streamline, smoothing, and taper controls. Opening this palette also enables drawing mode, and a visual dot preview shows the selected size and opacity while you drag the size slider.
-5. The handwriting controls start from balanced perfect-freehand-style defaults: `0.5` thinning, streamline, and smoothing, plus a small taper for less rounded starts and ends. In drawing mode, changes apply to new strokes only. Select **Reset** in the palette to return those advanced controls to their defaults.
-6. Drag anywhere on the canvas to draw. Press `Esc`, select the pencil button, or run the toggle command again to stop drawing.
-7. Leave drawing mode, then select and drag an existing stroke to move it.
-8. When one or more strokes are selected, the same left controls switch to selected-stroke editing. Use them to change color, size, opacity, hardness, and handwriting options from one place.
-9. Drag on an empty canvas area to use Obsidian's native marquee selection; it selects native canvas cards and Draw in Canvas strokes together.
-10. Drag from inside the selected bounding box to move the whole selected group, even when the pointer is not directly on a stroke line.
-11. Drag a corner handle on the selected bounding box to resize selected strokes larger or smaller. If **Settings → Draw in canvas → Allow tiny canvas items** is enabled, selected strokes also show +/− buttons for quick scaling.
-12. Use `Shift`/`Ctrl`/`Cmd` while selecting strokes to build a multi-selection, then press `Delete` or `Backspace` to erase the selected strokes.
-13. Use `Cmd`/`Ctrl`+`Z` to undo and `Cmd`/`Ctrl`+`Shift`+`Z` or `Ctrl`+`Y` to redo Draw in Canvas actions from the current session. The canvas **Undo** / **Redo** buttons work too. Use **Clear drawings from active canvas** as needed.
-14. Optional: enable **Allow tiny canvas items** in the plugin settings to resize native canvas cards, groups, and Draw in Canvas strokes below Obsidian's default size limit. This also adds +/− buttons to native canvas selections and allows closer zoom on tiny items.
-
-## Notes
-
-- Drawings are saved into each `.canvas` file under `drawInCanvas`.
-- The plugin is local-only and does not make network requests.
-- The Obsidian canvas DOM is internal API, so this prototype may need small selector updates if Obsidian changes its canvas markup.
-- The **Allow tiny canvas items** setting patches Obsidian's internal Canvas behavior only while the plugin is active and the setting is enabled.
-- Scaling native text cards with the +/− buttons stores a `drawInCanvasScale` value on those canvas nodes so text remains proportionally scaled in very small cards.
-- The handwritten stroke controls are ported into this plugin from the local perfect-freehand source; no runtime dependency is installed.
+- [perfect-freehand](https://github.com/steveruizok/perfect-freehand) for the handwritten stroke algorithm.
+- Obsidian Canvas and JSON Canvas for the canvas format this plugin extends.
