@@ -6,6 +6,11 @@ import {
 	clampNativeCanvasScaleForTinyElements,
 	clampNativeCanvasZoomForTinyElements,
 } from "./canvas-zoom-limits.ts";
+import {
+	acquirePreciseNativeCanvasSelectionOverlayPatch,
+	getNativeCanvasSelectionOverlayPatchPrototype,
+	type NativeCanvasSelectionOverlayPatchPrototype,
+} from "./canvas-selection-overlay.ts";
 
 // Obsidian's Canvas API is internal, so keep the native canvas patches isolated here.
 
@@ -87,6 +92,8 @@ export class NativeCanvasInteractionLimits {
 	private hadOwnSnapDistance = false;
 	private originalSnapDistanceDescriptor: PropertyDescriptor | undefined;
 	private patchedSnapDistanceGetter: (() => number) | undefined;
+	private selectionOverlayPatchPrototype: NativeCanvasSelectionOverlayPatchPrototype | null = null;
+	private releaseSelectionOverlayPatchCallback: (() => void) | null = null;
 	private readonly target: CanvasTarget;
 
 	constructor(target: CanvasTarget) {
@@ -132,6 +139,7 @@ export class NativeCanvasInteractionLimits {
 		this.patchZoomToBbox(canvas);
 		this.patchGridSpacing(canvas);
 		this.patchSnapDistance(canvas);
+		this.patchSelectionOverlay(canvas);
 	}
 
 	private patchRequestFrame(canvas: NativeCanvasInstance): void {
@@ -243,6 +251,18 @@ export class NativeCanvasInteractionLimits {
 		this.isSnapDistancePatched = true;
 	}
 
+	private patchSelectionOverlay(canvas: NativeCanvasInstance): void {
+		const prototype = getNativeCanvasSelectionOverlayPatchPrototype(canvas);
+
+		if (!prototype || prototype === this.selectionOverlayPatchPrototype) {
+			return;
+		}
+
+		this.restoreSelectionOverlayPatch();
+		this.selectionOverlayPatchPrototype = prototype;
+		this.releaseSelectionOverlayPatchCallback = acquirePreciseNativeCanvasSelectionOverlayPatch(prototype);
+	}
+
 	private zoomToBboxWithoutUpperZoomLimit(canvas: NativeCanvasInstance, bounds: NativeCanvasBounds): boolean {
 		const canvasRect = canvas.canvasRect;
 
@@ -345,7 +365,14 @@ export class NativeCanvasInteractionLimits {
 		this.restoreZoomToBbox(canvas);
 		this.restoreGridSpacing(canvas);
 		this.restoreSnapDistance(canvas);
+		this.restoreSelectionOverlayPatch();
 		this.restoreNativeZoomClamp(canvas);
+	}
+
+	private restoreSelectionOverlayPatch(): void {
+		this.releaseSelectionOverlayPatchCallback?.();
+		this.releaseSelectionOverlayPatchCallback = null;
+		this.selectionOverlayPatchPrototype = null;
 	}
 
 	private restoreNativeZoomClamp(canvas: NativeCanvasInstance): void {
