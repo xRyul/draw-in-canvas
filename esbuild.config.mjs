@@ -83,7 +83,8 @@ async function copyReleaseFilesToTestingVault() {
 	const obsidianDir = path.join(testingVault, ".obsidian");
 
 	if (!(await directoryExists(obsidianDir))) {
-		throw new Error(`Testing vault not found at ${testingVault}. Expected ${obsidianDir} to exist.`);
+		console.warn(`Skipping testing-vault copy: expected ${obsidianDir} to exist.`);
+		return;
 	}
 
 	await mkdir(testingPluginDir, {recursive: true});
