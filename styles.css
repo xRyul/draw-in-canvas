@@ -1326,79 +1326,93 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer {
-	height: var(--draw-in-canvas-tiny-resizer-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
-	width: var(--draw-in-canvas-tiny-resizer-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
+	--draw-in-canvas-tiny-resizer-layout-size: max(
+		var(--draw-in-canvas-tiny-resizer-size, calc(var(--resizer-size) * var(--zoom-multiplier))),
+		var(--draw-in-canvas-tiny-resizer-min-layout-size, 0.022px)
+	);
+
+	height: var(--draw-in-canvas-tiny-resizer-layout-size);
+	width: var(--draw-in-canvas-tiny-resizer-layout-size);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point {
-	height: var(--draw-in-canvas-tiny-connection-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
-	width: var(--draw-in-canvas-tiny-connection-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
+	--draw-in-canvas-tiny-connection-layout-size: max(
+		var(--draw-in-canvas-tiny-connection-size, calc(var(--resizer-size) * var(--zoom-multiplier))),
+		var(--draw-in-canvas-tiny-connection-min-layout-size, 0.022px)
+	);
+
+	height: var(--draw-in-canvas-tiny-connection-layout-size);
+	width: var(--draw-in-canvas-tiny-connection-layout-size);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="top"] {
-	top: var(--draw-in-canvas-tiny-resizer-offset);
+	top: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
 	width: auto;
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="bottom"] {
-	bottom: var(--draw-in-canvas-tiny-resizer-offset);
+	bottom: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
 	width: auto;
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="left"] {
 	height: auto;
-	left: var(--draw-in-canvas-tiny-resizer-offset);
+	left: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="right"] {
 	height: auto;
-	right: var(--draw-in-canvas-tiny-resizer-offset);
+	right: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="topright"] {
-	right: var(--draw-in-canvas-tiny-resizer-offset);
-	top: var(--draw-in-canvas-tiny-resizer-offset);
+	right: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
+	top: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
+	z-index: 1;
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="bottomright"] {
-	bottom: var(--draw-in-canvas-tiny-resizer-offset);
-	right: var(--draw-in-canvas-tiny-resizer-offset);
+	bottom: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
+	right: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
+	z-index: 1;
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="topleft"] {
-	left: var(--draw-in-canvas-tiny-resizer-offset);
-	top: var(--draw-in-canvas-tiny-resizer-offset);
+	left: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
+	top: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
+	z-index: 1;
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-resizer[data-resize="bottomleft"] {
-	bottom: var(--draw-in-canvas-tiny-resizer-offset);
-	left: var(--draw-in-canvas-tiny-resizer-offset);
+	bottom: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
+	left: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / -2);
+	z-index: 1;
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="top"],
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="bottom"] {
-	left: calc(50% - var(--draw-in-canvas-tiny-connection-half));
+	left: calc(50% - var(--draw-in-canvas-tiny-connection-layout-size) / 2);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="top"] {
-	top: calc(var(--draw-in-canvas-tiny-resizer-half) - var(--draw-in-canvas-tiny-connection-half));
+	top: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / 2 - var(--draw-in-canvas-tiny-connection-layout-size) / 2);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="bottom"] {
-	bottom: calc(var(--draw-in-canvas-tiny-resizer-half) - var(--draw-in-canvas-tiny-connection-half));
+	bottom: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / 2 - var(--draw-in-canvas-tiny-connection-layout-size) / 2);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="left"],
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="right"] {
-	top: calc(50% - var(--draw-in-canvas-tiny-connection-half));
+	top: calc(50% - var(--draw-in-canvas-tiny-connection-layout-size) / 2);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="left"] {
-	left: calc(var(--draw-in-canvas-tiny-resizer-half) - var(--draw-in-canvas-tiny-connection-half));
+	left: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / 2 - var(--draw-in-canvas-tiny-connection-layout-size) / 2);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point[data-side="right"] {
-	right: calc(var(--draw-in-canvas-tiny-resizer-half) - var(--draw-in-canvas-tiny-connection-half));
+	right: calc(var(--draw-in-canvas-tiny-resizer-layout-size) / 2 - var(--draw-in-canvas-tiny-connection-layout-size) / 2);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-node-connection-point::after {
