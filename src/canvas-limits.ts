@@ -1,10 +1,11 @@
 import type {CanvasTarget} from "./canvas-target";
+import {getNativeCanvasGridSpacingForTinyElements, getNativeCanvasSnapDistanceForTinyElements} from "./canvas-snapping.ts";
 import {
 	DEFAULT_MAX_NATIVE_CANVAS_ZOOM,
 	DEFAULT_MIN_NATIVE_CANVAS_ZOOM,
 	clampNativeCanvasScaleForTinyElements,
 	clampNativeCanvasZoomForTinyElements,
-} from "./canvas-zoom-limits";
+} from "./canvas-zoom-limits.ts";
 
 // Obsidian's Canvas API is internal, so keep the native canvas patches isolated here.
 
@@ -20,6 +21,7 @@ interface NativeCanvasBounds {
 
 interface NativeCanvasConfig {
 	minContainerDimension?: number;
+	objectSnapDistance?: number;
 }
 
 interface NativeCanvasRect {
@@ -48,6 +50,9 @@ interface NativeCanvasInstance {
 	ty?: number;
 	zoom?: number;
 	tZoom?: number;
+	gridSpacing?: number;
+	scale?: number;
+	snapDistance?: number;
 	zoomCenter?: NativeCanvasPoint | null;
 	requestFrame?: NativeCanvasRequestFrame;
 	markViewportChanged?: () => void;
@@ -74,8 +79,19 @@ export class NativeCanvasInteractionLimits {
 	private hadOwnZoomToBbox = false;
 	private originalZoomToBbox: NativeCanvasZoomToBbox | undefined;
 	private patchedZoomToBbox: NativeCanvasZoomToBbox | undefined;
+	private isGridSpacingPatched = false;
+	private hadOwnGridSpacing = false;
+	private originalGridSpacingDescriptor: PropertyDescriptor | undefined;
+	private patchedGridSpacingGetter: (() => number) | undefined;
+	private isSnapDistancePatched = false;
+	private hadOwnSnapDistance = false;
+	private originalSnapDistanceDescriptor: PropertyDescriptor | undefined;
+	private patchedSnapDistanceGetter: (() => number) | undefined;
+	private readonly target: CanvasTarget;
 
-	constructor(private readonly target: CanvasTarget) {}
+	constructor(target: CanvasTarget) {
+		this.target = target;
+	}
 
 	setEnabled(enabled: boolean): void {
 		const canvas = getNativeCanvas(this.target);
@@ -114,6 +130,8 @@ export class NativeCanvasInteractionLimits {
 	private applyZoomOverrides(canvas: NativeCanvasInstance): void {
 		this.patchRequestFrame(canvas);
 		this.patchZoomToBbox(canvas);
+		this.patchGridSpacing(canvas);
+		this.patchSnapDistance(canvas);
 	}
 
 	private patchRequestFrame(canvas: NativeCanvasInstance): void {
@@ -162,6 +180,67 @@ export class NativeCanvasInteractionLimits {
 		canvas.zoomToBbox = patchedZoomToBbox;
 		this.patchedZoomToBbox = patchedZoomToBbox;
 		this.isZoomToBboxPatched = true;
+	}
+
+	private patchGridSpacing(canvas: NativeCanvasInstance): void {
+		if (this.isGridSpacingPatched) {
+			return;
+		}
+
+		const originalGridSpacingDescriptor = Object.getOwnPropertyDescriptor(canvas, "gridSpacing");
+
+		if (originalGridSpacingDescriptor && !originalGridSpacingDescriptor.configurable) {
+			return;
+		}
+
+		const patchedGridSpacingGetter = (): number => getNativeCanvasGridSpacingForTinyElements(getCurrentCanvasZoom(canvas));
+
+		try {
+			Object.defineProperty(canvas, "gridSpacing", {
+				configurable: true,
+				enumerable: originalGridSpacingDescriptor?.enumerable ?? false,
+				get: patchedGridSpacingGetter,
+			});
+		} catch {
+			return;
+		}
+
+		this.hadOwnGridSpacing = Boolean(originalGridSpacingDescriptor);
+		this.originalGridSpacingDescriptor = originalGridSpacingDescriptor;
+		this.patchedGridSpacingGetter = patchedGridSpacingGetter;
+		this.isGridSpacingPatched = true;
+	}
+
+	private patchSnapDistance(canvas: NativeCanvasInstance): void {
+		if (this.isSnapDistancePatched) {
+			return;
+		}
+
+		const originalSnapDistanceDescriptor = Object.getOwnPropertyDescriptor(canvas, "snapDistance");
+
+		if (originalSnapDistanceDescriptor && !originalSnapDistanceDescriptor.configurable) {
+			return;
+		}
+
+		const patchedSnapDistanceGetter = (): number => getNativeCanvasSnapDistanceForTinyElements(
+			canvas.config?.objectSnapDistance,
+			getCurrentCanvasScale(canvas),
+		);
+
+		try {
+			Object.defineProperty(canvas, "snapDistance", {
+				configurable: true,
+				enumerable: originalSnapDistanceDescriptor?.enumerable ?? false,
+				get: patchedSnapDistanceGetter,
+			});
+		} catch {
+			return;
+		}
+
+		this.hadOwnSnapDistance = Boolean(originalSnapDistanceDescriptor);
+		this.originalSnapDistanceDescriptor = originalSnapDistanceDescriptor;
+		this.patchedSnapDistanceGetter = patchedSnapDistanceGetter;
+		this.isSnapDistancePatched = true;
 	}
 
 	private zoomToBboxWithoutUpperZoomLimit(canvas: NativeCanvasInstance, bounds: NativeCanvasBounds): boolean {
@@ -264,6 +343,8 @@ export class NativeCanvasInteractionLimits {
 	private restoreZoomOverrides(canvas: NativeCanvasInstance): void {
 		this.restoreRequestFrame(canvas);
 		this.restoreZoomToBbox(canvas);
+		this.restoreGridSpacing(canvas);
+		this.restoreSnapDistance(canvas);
 		this.restoreNativeZoomClamp(canvas);
 	}
 
@@ -313,12 +394,70 @@ export class NativeCanvasInteractionLimits {
 		this.originalZoomToBbox = undefined;
 		this.patchedZoomToBbox = undefined;
 	}
+
+	private restoreGridSpacing(canvas: NativeCanvasInstance): void {
+		if (!this.isGridSpacingPatched) {
+			return;
+		}
+
+		const currentDescriptor = Object.getOwnPropertyDescriptor(canvas, "gridSpacing");
+
+		if (currentDescriptor?.get === this.patchedGridSpacingGetter) {
+			if (this.hadOwnGridSpacing && this.originalGridSpacingDescriptor) {
+				Object.defineProperty(canvas, "gridSpacing", this.originalGridSpacingDescriptor);
+			} else {
+				delete canvas.gridSpacing;
+			}
+		}
+
+		this.isGridSpacingPatched = false;
+		this.hadOwnGridSpacing = false;
+		this.originalGridSpacingDescriptor = undefined;
+		this.patchedGridSpacingGetter = undefined;
+	}
+
+	private restoreSnapDistance(canvas: NativeCanvasInstance): void {
+		if (!this.isSnapDistancePatched) {
+			return;
+		}
+
+		const currentDescriptor = Object.getOwnPropertyDescriptor(canvas, "snapDistance");
+
+		if (currentDescriptor?.get === this.patchedSnapDistanceGetter) {
+			if (this.hadOwnSnapDistance && this.originalSnapDistanceDescriptor) {
+				Object.defineProperty(canvas, "snapDistance", this.originalSnapDistanceDescriptor);
+			} else {
+				delete canvas.snapDistance;
+			}
+		}
+
+		this.isSnapDistancePatched = false;
+		this.hadOwnSnapDistance = false;
+		this.originalSnapDistanceDescriptor = undefined;
+		this.patchedSnapDistanceGetter = undefined;
+	}
 }
 
 function getNativeCanvas(target: CanvasTarget): NativeCanvasInstance | null {
 	return ((target.view as CanvasViewWithCanvas).canvas ?? null);
 }
 
-function isPositiveFiniteNumber(value: number): boolean {
-	return Number.isFinite(value) && value > 0;
+function getCurrentCanvasZoom(canvas: NativeCanvasInstance): number {
+	if (typeof canvas.zoom === "number" && Number.isFinite(canvas.zoom)) {
+		return canvas.zoom;
+	}
+
+	return typeof canvas.tZoom === "number" ? canvas.tZoom : DEFAULT_MAX_NATIVE_CANVAS_ZOOM;
+}
+
+function getCurrentCanvasScale(canvas: NativeCanvasInstance): number {
+	if (isPositiveFiniteNumber(canvas.scale)) {
+		return canvas.scale;
+	}
+
+	return 2 ** getCurrentCanvasZoom(canvas);
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
