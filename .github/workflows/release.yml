@@ -65,7 +65,8 @@ jobs:
           if pnpm exec eslint --version >/dev/null 2>&1; then
             pnpm lint
           else
-            pnpm dlx eslint@9.39.4 .
+            pnpm add --save-dev eslint@9.39.4
+            pnpm lint
           fi
 
       - name: Build release assets
