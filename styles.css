@@ -1411,8 +1411,9 @@ body.draw-in-canvas-color-palette-open .tooltip {
 	width: var(--draw-in-canvas-tiny-connection-native-size, calc(var(--resizer-size) * var(--zoom-multiplier)));
 }
 
+/* Let native edge visuals shrink when zoomed out, but cap them to readable screen sizes when zoomed in. */
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-edges path.canvas-display-path {
-	stroke-width: var(--draw-in-canvas-tiny-edge-width, calc(2px * var(--zoom-multiplier)));
+	stroke-width: var(--draw-in-canvas-tiny-edge-width, 2px);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-edges path.canvas-interaction-path {
@@ -1420,13 +1421,13 @@ body.draw-in-canvas-color-palette-open .tooltip {
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-edges polygon.canvas-path-end {
-	stroke-width: var(--draw-in-canvas-tiny-snap-line-width, 1px);
-	transform: scale(var(--draw-in-canvas-tiny-edge-arrow-scale, var(--zoom-multiplier)));
+	stroke-width: 1px;
+	transform: scale(var(--draw-in-canvas-tiny-edge-arrow-scale, 1));
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-edges g.is-focused path.canvas-display-path,
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas:not(.is-connecting) .canvas-edges g:hover path.canvas-display-path {
-	stroke-width: var(--draw-in-canvas-tiny-edge-focus-width, calc(5.5px * var(--zoom-multiplier)));
+	stroke-width: var(--draw-in-canvas-tiny-edge-focus-width, 5.5px);
 }
 
 .canvas-wrapper.draw-in-canvas-tiny-control-scale .canvas-snaps line {

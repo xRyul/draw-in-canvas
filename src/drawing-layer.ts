@@ -1,6 +1,7 @@
 import {App, Notice, setIcon} from "obsidian";
 import {loadCanvasDrawingDataWithMetadata, saveCanvasDrawingData} from "./canvas-file";
 import {CanvasTarget} from "./canvas-target";
+import {getTinyCanvasEdgeVisualScale} from "./canvas-edge-scale";
 import {NativeCanvasInteractionLimits} from "./canvas-limits";
 import {NativeCanvasElementScaleControls} from "./canvas-element-scale-controls";
 import {
@@ -8133,12 +8134,13 @@ private hasPendingRasterTileWork(): boolean {
 		}
 
 		const canvasUnitsPerPixel = this.getCanvasUnitsForScreenPixels(1);
+		const edgeVisualScale = getTinyCanvasEdgeVisualScale(canvasUnitsPerPixel);
 		const scaleKey = formatSvgLength(canvasUnitsPerPixel);
 
 		wrapperEl.classList.add(TINY_CONTROL_SCALE_CLASS);
 
 		if (this.tinyControlScaleWrapperEl === wrapperEl && this.tinyControlScaleKey === scaleKey) {
-			this.syncNativeCanvasEdgeEndpoints(canvasUnitsPerPixel);
+			this.syncNativeCanvasEdgeEndpoints(edgeVisualScale);
 			return false;
 		}
 
@@ -8157,10 +8159,10 @@ private hasPendingRasterTileWork(): boolean {
 			"--draw-in-canvas-tiny-connection-scale": formatSvgLength(canvasUnitsPerPixel),
 			"--draw-in-canvas-tiny-connection-size": formatCssPixels(TINY_CONTROL_CONNECTION_POINT_SIZE * canvasUnitsPerPixel),
 			"--draw-in-canvas-tiny-connection-half": formatCssPixels(TINY_CONTROL_CONNECTION_POINT_SIZE * canvasUnitsPerPixel / 2),
-			"--draw-in-canvas-tiny-edge-width": formatCssPixels(TINY_CONTROL_EDGE_WIDTH * canvasUnitsPerPixel),
-			"--draw-in-canvas-tiny-edge-focus-width": formatCssPixels(TINY_CONTROL_EDGE_FOCUS_WIDTH * canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-edge-width": formatCssPixels(TINY_CONTROL_EDGE_WIDTH * edgeVisualScale),
+			"--draw-in-canvas-tiny-edge-focus-width": formatCssPixels(TINY_CONTROL_EDGE_FOCUS_WIDTH * edgeVisualScale),
 			"--draw-in-canvas-tiny-edge-hit-width": formatCssPixels(TINY_CONTROL_EDGE_HIT_WIDTH * canvasUnitsPerPixel),
-			"--draw-in-canvas-tiny-edge-arrow-scale": formatSvgLength(canvasUnitsPerPixel),
+			"--draw-in-canvas-tiny-edge-arrow-scale": formatSvgLength(edgeVisualScale),
 			"--draw-in-canvas-tiny-snap-line-width": formatCssPixels(TINY_CONTROL_SNAP_LINE_WIDTH * canvasUnitsPerPixel),
 			"--draw-in-canvas-tiny-snap-point-scale": formatSvgLength(canvasUnitsPerPixel),
 			"--draw-in-canvas-tiny-selection-border-width": formatCssPixels(TINY_CONTROL_SELECTION_BORDER_WIDTH * canvasUnitsPerPixel),
@@ -8169,14 +8171,14 @@ private hasPendingRasterTileWork(): boolean {
 			"--draw-in-canvas-tiny-label-gap": formatCssPixels(-TINY_CONTROL_LABEL_GAP * canvasUnitsPerPixel),
 			"--draw-in-canvas-tiny-label-scale": formatSvgLength(canvasUnitsPerPixel),
 		});
-		this.syncNativeCanvasEdgeEndpoints(canvasUnitsPerPixel);
+		this.syncNativeCanvasEdgeEndpoints(edgeVisualScale);
 		this.tinyControlScaleWrapperEl = wrapperEl;
 		this.tinyControlScaleKey = scaleKey;
 		return true;
 	}
 
 
-	private syncNativeCanvasEdgeEndpoints(canvasUnitsPerPixel: number): void {
+	private syncNativeCanvasEdgeEndpoints(arrowScale: number): void {
 		this.pruneNativeEdgePathOverrides();
 		const pathGroupEls = Array.from(this.target.containerEl.querySelectorAll<SVGGElement>(".canvas-edges g"))
 			.filter((groupEl) => groupEl.querySelector("path.canvas-display-path"));
@@ -8193,7 +8195,7 @@ private hasPendingRasterTileWork(): boolean {
 				continue;
 			}
 
-			const arrowBasePoint = getCanvasEdgeArrowBasePoint(arrowGroupEl, canvasUnitsPerPixel);
+			const arrowBasePoint = getCanvasEdgeArrowBasePoint(arrowGroupEl, arrowScale);
 
 			if (!arrowBasePoint) {
 				continue;
