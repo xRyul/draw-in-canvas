@@ -21,7 +21,7 @@ Draw in Canvas adds a lightweight drawing layer to `.canvas` files while keeping
 - Adds a pencil button to the Canvas toolbar and drawing controls on the left.
 - `Esc` leaves drawing mode, `1` returns to select mode, and `Delete` / `Backspace` removes selected strokes.
 - The color picker includes presets, recent colors, hex input, and HSL/RGB/Lab controls. Use what you need; ignore the rest.
-- **Allow tiny canvas items** is optional. Enable it only if you need very small cards/drawings or closer zoom. It also adds quick scale and layer controls.
+- **Allow tiny canvas items** is optional. Enable it only if you need very small cards/drawings, closer zoom, quick scale/layer controls, or stable card layering while selecting overlapping cards.
 - Large canvases should stay usable, but very dense drawings can still affect performance.
 - Obsidian can still open the canvas without this plugin, but plugin drawings are only visible when Draw in Canvas is enabled.
 
@@ -34,7 +34,7 @@ Draw in Canvas adds a lightweight drawing layer to `.canvas` files while keeping
 - **Stroke opacity**: Controls stroke transparency.
 - **Handwritten strokes**: Enables smoother, pressure-aware strokes with tapered starts and ends.
 - **Pen cursor fallback**: Shows a plugin cursor while drawing with a stylus when the native cursor is hidden or unreliable.
-- **Allow tiny canvas items**: Lowers Obsidian's native Canvas size limit, enables closer zoom, and adds quick scale/layer controls.
+- **Allow tiny canvas items**: Lowers Obsidian's native Canvas size limit, enables closer zoom, adds quick scale/layer controls, and keeps selected cards at their saved layer instead of temporarily bringing them to front.
 
 
 ## 📜 License

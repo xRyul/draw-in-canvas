@@ -22,6 +22,12 @@ import {
 	type LayerAction,
 	type LayerActionAvailability,
 } from "./layering";
+import {
+	acquireStableCanvasNodeZIndexPatch,
+	getStableCanvasNodeZIndexPatchPrototypes,
+	renderCanvasNodeZIndexes,
+	type StableCanvasNodeZIndexPatchPrototype,
+} from "./canvas-node-z-index";
 
 // Obsidian's Canvas API is internal, so keep native canvas element menu patches isolated here.
 
@@ -122,6 +128,8 @@ export class NativeCanvasElementScaleControls {
 	private layerMenuEl: HTMLElement | null = null;
 	private readonly buttonDisposers: Array<() => void> = [];
 	private readonly releaseResizePatches = new Map<NativeCanvasNodeResizePrototype, () => void>();
+	private readonly releaseZIndexPatches = new Map<StableCanvasNodeZIndexPatchPrototype, () => void>();
+	private deferredSyncFrameId: number | null = null;
 	private readonly contentScaleSync: NativeCanvasContentScaleSync;
 	private readonly target: CanvasTarget;
 
@@ -132,15 +140,19 @@ export class NativeCanvasElementScaleControls {
 
 	setEnabled(enabled: boolean): void {
 		this.enabled = enabled;
+		const canvas = getNativeCanvas(this.target);
 
 		if (!enabled) {
 			this.removeControls();
 			this.releaseAspectRatioResizePatch();
-			this.contentScaleSync.syncForCanvas(getNativeCanvas(this.target));
+			this.releaseZIndexPatch(canvas);
+			this.cancelDeferredSync();
+			this.contentScaleSync.syncForCanvas(canvas);
 			return;
 		}
 
 		this.sync();
+		this.scheduleDeferredSync();
 	}
 
 	syncForCanvasDomChange(): void {
@@ -159,6 +171,7 @@ export class NativeCanvasElementScaleControls {
 			this.removeControls();
 			this.contentScaleSync.clear();
 			this.releaseAspectRatioResizePatch();
+			this.releaseZIndexPatch();
 			return;
 		}
 
@@ -169,8 +182,11 @@ export class NativeCanvasElementScaleControls {
 		if (!this.enabled) {
 			this.removeControls();
 			this.releaseAspectRatioResizePatch();
+			this.releaseZIndexPatch(canvas);
 			return;
 		}
+
+		this.syncZIndexPatch(canvas);
 
 		this.syncAspectRatioResizePatch(canvas);
 
@@ -199,9 +215,12 @@ export class NativeCanvasElementScaleControls {
 	}
 
 	dispose(): void {
+		const canvas = getNativeCanvas(this.target);
 		this.enabled = false;
+		this.cancelDeferredSync();
 		this.removeControls();
 		this.releaseAspectRatioResizePatch();
+		this.releaseZIndexPatch(canvas);
 		this.contentScaleSync.clear();
 	}
 
@@ -347,6 +366,59 @@ export class NativeCanvasElementScaleControls {
 		}
 
 		this.releaseResizePatches.clear();
+	}
+
+	private syncZIndexPatch(canvas: NativeCanvasInstance): void {
+		const prototypes = new Set(getStableCanvasNodeZIndexPatchPrototypes(canvas));
+
+		for (const [prototype, releaseZIndexPatch] of this.releaseZIndexPatches) {
+			if (!prototypes.has(prototype)) {
+				releaseZIndexPatch();
+				this.releaseZIndexPatches.delete(prototype);
+			}
+		}
+
+		for (const prototype of prototypes) {
+			if (!this.releaseZIndexPatches.has(prototype)) {
+				this.releaseZIndexPatches.set(prototype, acquireStableCanvasNodeZIndexPatch(prototype));
+			}
+		}
+
+		renderCanvasNodeZIndexes(canvas);
+	}
+
+	private releaseZIndexPatch(canvas?: NativeCanvasInstance | null): void {
+		for (const releaseZIndexPatch of this.releaseZIndexPatches.values()) {
+			releaseZIndexPatch();
+		}
+
+		this.releaseZIndexPatches.clear();
+		if (canvas) {
+			renderCanvasNodeZIndexes(canvas);
+		}
+	}
+
+	private scheduleDeferredSync(): void {
+		if (this.deferredSyncFrameId !== null) {
+			return;
+		}
+
+		this.deferredSyncFrameId = window.requestAnimationFrame(() => {
+			this.deferredSyncFrameId = null;
+
+			if (this.enabled) {
+				this.sync();
+			}
+		});
+	}
+
+	private cancelDeferredSync(): void {
+		if (this.deferredSyncFrameId === null) {
+			return;
+		}
+
+		window.cancelAnimationFrame(this.deferredSyncFrameId);
+		this.deferredSyncFrameId = null;
 	}
 
 	private readonly handleButtonPointerDown = (event: PointerEvent): void => {
