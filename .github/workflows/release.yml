@@ -60,7 +60,13 @@ jobs:
         run: pnpm test
 
       - name: Run lint
-        run: pnpm lint
+        run: |
+          set -euo pipefail
+          if pnpm exec eslint --version >/dev/null 2>&1; then
+            pnpm lint
+          else
+            pnpm dlx eslint@9.39.4 .
+          fi
 
       - name: Build release assets
         run: |
