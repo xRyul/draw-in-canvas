@@ -49,7 +49,7 @@ export class DrawInCanvasSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Stroke width")
-			.setDesc("Width of new freehand strokes in canvas units.")
+			.setDesc("Screen-pixel width for new freehand strokes at the current canvas zoom.")
 			.addSlider((slider) => slider
 				.setLimits(STROKE_WIDTH_MIN, STROKE_WIDTH_MAX, STROKE_WIDTH_STEP)
 				.setValue(normalizeStrokeWidth(this.plugin.settings.strokeWidth))

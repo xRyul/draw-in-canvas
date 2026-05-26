@@ -35,9 +35,15 @@ export const END_CAP_SEGMENTS = 29
 export const CORNER_CAP_SEGMENTS = 13
 
 /**
- * Pixels to skip at the end of a stroke to reduce noise.
+ * Canvas units to skip at the end of a stroke to reduce noise.
+ * Cap by stroke size so zoom-adjusted sub-canvas-unit strokes still produce geometry.
  */
 export const END_NOISE_THRESHOLD = 3
+
+export function getEndNoiseThreshold(size: number): number {
+  if (!Number.isFinite(size) || size <= 0) return END_NOISE_THRESHOLD
+  return Math.min(END_NOISE_THRESHOLD, size)
+}
 
 /**
  * Minimum interpolation factor for streamline.
@@ -55,6 +61,11 @@ export const STREAMLINE_T_RANGE = 0.85
  * Minimum stroke radius to prevent invisible strokes.
  */
 export const MIN_RADIUS = 0.01
+
+export function getMinimumStrokeRadius(size: number): number {
+  if (!Number.isFinite(size) || size <= 0) return MIN_RADIUS
+  return Math.min(MIN_RADIUS, size / 100)
+}
 
 /**
  * Default pressure for the first point of a stroke.

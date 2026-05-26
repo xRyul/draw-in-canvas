@@ -3,8 +3,9 @@ import {
   CORNER_CAP_SEGMENTS,
   END_CAP_SEGMENTS,
   END_NOISE_THRESHOLD,
+  getEndNoiseThreshold,
+  getMinimumStrokeRadius,
   FIXED_PI,
-  MIN_RADIUS,
   START_CAP_SEGMENTS,
 } from './constants'
 import { getStrokeRadius } from './getStrokeRadius'
@@ -195,6 +196,8 @@ export function getStrokeOutlinePoints(
 
   // The minimum allowed distance between points (squared)
   const minDistance = Math.pow(size * smoothing, 2)
+  const endNoiseThreshold = getEndNoiseThreshold(size)
+  const minimumRadius = getMinimumStrokeRadius(size)
 
   // Our collected left and right points
   const leftPts: Vec2[] = []
@@ -246,7 +249,7 @@ export function getStrokeOutlinePoints(
     const isLastPoint = i === points.length - 1
 
     // Removes noise from the end of the line
-    if (!isLastPoint && totalLength - runningLength < END_NOISE_THRESHOLD) {
+    if (!isLastPoint && totalLength - runningLength < endNoiseThreshold) {
       continue
     }
 
@@ -294,7 +297,7 @@ export function getStrokeOutlinePoints(
         : 1
 
     radius = Math.max(
-      MIN_RADIUS,
+      minimumRadius,
       radius * Math.min(taperStartStrength, taperEndStrength)
     )
 

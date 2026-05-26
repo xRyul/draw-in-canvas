@@ -1,6 +1,6 @@
 {
 	"name": "draw-in-canvas",
-	"version": "0.1.6",
+	"version": "0.1.7",
 	"description": "Draw freehand annotations on Obsidian JSON Canvas files.",
 	"main": "main.js",
 	"type": "module",

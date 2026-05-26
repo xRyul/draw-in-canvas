@@ -30,6 +30,10 @@ const STROKE_HANDWRITING_SLIDER_SETTINGS = {
 	strokeTaperEnd: {min: 0, max: 100, step: 1, defaultValue: DEFAULT_STROKE_HANDWRITING_SETTINGS.strokeTaperEnd},
 } as const;
 
+// perfect-freehand can collapse very short tapered strokes into wedge-like polygons.
+// Render those as normal round centerline strokes until there is enough length for handwriting geometry.
+const HANDWRITTEN_CENTERLINE_FALLBACK_STROKE_WIDTH_RATIO = 2;
+
 export function createStrokeHandwriting(settings: StrokeHandwritingSettingsSource): CanvasStrokeHandwriting {
 	return {
 		enabled: settings.beautifulStrokes === true,
@@ -56,8 +60,8 @@ export function normalizeStrokeHandwriting(
 		thinning: normalizeStrokeHandwritingSliderValue("strokeThinning", value.thinning ?? fallback.thinning),
 		streamline: normalizeStrokeHandwritingSliderValue("strokeStreamline", value.streamline ?? fallback.streamline),
 		smoothing: normalizeStrokeHandwritingSliderValue("strokeSmoothing", value.smoothing ?? fallback.smoothing),
-		taperStart: normalizeStrokeHandwritingSliderValue("strokeTaperStart", value.taperStart ?? fallback.taperStart),
-		taperEnd: normalizeStrokeHandwritingSliderValue("strokeTaperEnd", value.taperEnd ?? fallback.taperEnd),
+		taperStart: normalizeStrokeTaperDistance(value.taperStart, fallback.taperStart),
+		taperEnd: normalizeStrokeTaperDistance(value.taperEnd, fallback.taperEnd),
 	};
 }
 
@@ -76,8 +80,16 @@ export function isStrokeHandwriting(value: unknown): value is CanvasStrokeHandwr
 		&& isNormalizedStrokeHandwritingSliderValue("strokeThinning", value.thinning)
 		&& isNormalizedStrokeHandwritingSliderValue("strokeStreamline", value.streamline)
 		&& isNormalizedStrokeHandwritingSliderValue("strokeSmoothing", value.smoothing)
-		&& isNormalizedStrokeHandwritingSliderValue("strokeTaperStart", value.taperStart)
-		&& isNormalizedStrokeHandwritingSliderValue("strokeTaperEnd", value.taperEnd);
+		&& isStrokeTaperDistance(value.taperStart)
+		&& isStrokeTaperDistance(value.taperEnd);
+}
+
+export function shouldUseHandwrittenStrokePathForLength(strokeLength: number, strokeWidth: number): boolean {
+	if (!Number.isFinite(strokeLength) || !Number.isFinite(strokeWidth) || strokeWidth <= 0) {
+		return true;
+	}
+
+	return strokeLength >= strokeWidth * HANDWRITTEN_CENTERLINE_FALLBACK_STROKE_WIDTH_RATIO;
 }
 
 function normalizeStrokeHandwritingSliderValue(setting: StrokeHandwritingSliderSetting, value: unknown): number {
@@ -91,6 +103,14 @@ function normalizeStrokeHandwritingSliderValue(setting: StrokeHandwritingSliderS
 	const steppedValue = Math.round(numericValue / slider.step) * slider.step;
 	const clampedValue = Math.min(slider.max, Math.max(slider.min, steppedValue));
 	return roundSliderValue(clampedValue, slider.step);
+}
+
+function normalizeStrokeTaperDistance(value: unknown, fallback: number): number {
+	return isStrokeTaperDistance(value) ? value : fallback;
+}
+
+function isStrokeTaperDistance(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isNormalizedStrokeHandwritingSliderValue(setting: StrokeHandwritingSliderSetting, value: unknown): value is number {

@@ -28,7 +28,11 @@ import {
 	normalizeStrokeOpacity,
 	normalizeStrokeWidth,
 } from "./settings";
-import {createStrokeHandwriting, getStrokeHandwriting} from "./stroke-handwriting.ts";
+import {
+	createStrokeHandwriting,
+	getStrokeHandwriting,
+	shouldUseHandwrittenStrokePathForLength,
+} from "./stroke-handwriting.ts";
 import {
 	areStrokeStylesEqual,
 	cloneStrokeStyle,
@@ -110,6 +114,11 @@ import {
 	createStrokePathCacheKey,
 	StrokePathCache,
 } from "./stroke-path-cache";
+import {
+	getCanvasDistanceForScreenPixels,
+	getCanvasStrokeHandwritingForScreenPixels,
+	getCanvasStrokeWidthForScreenPixels,
+} from "./stroke-width.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
@@ -4760,7 +4769,11 @@ private hasPendingRasterTileWork(): boolean {
 
 
 	private shouldUseHandwrittenStrokePath(stroke: CanvasStroke, hasPressure = strokeHasPressure(stroke)): boolean {
-		return getStrokeHandwriting(stroke, this.settings).enabled || hasPressure;
+		if (!getStrokeHandwriting(stroke, this.settings).enabled && !hasPressure) {
+			return false;
+		}
+
+		return shouldUseHandwrittenStrokePathForLength(getStrokePolylineLength(stroke.points), stroke.width);
 	}
 
 	private getStrokeCenterPath(stroke: CanvasStroke, useCache = true): string {
@@ -4862,13 +4875,14 @@ private hasPendingRasterTileWork(): boolean {
 		event.stopPropagation();
 		trySetPointerCapture(this.captureEl, event.pointerId);
 
+		const screenScale = this.getCanvasScreenScale();
 		const stroke: CanvasStroke = {
 			id: createStrokeId(),
 			color: this.settings.strokeColor,
-			width: this.settings.strokeWidth,
+			width: getCanvasStrokeWidthForScreenPixels(this.settings.strokeWidth, screenScale),
 			hardness: this.settings.strokeHardness,
 			opacity: this.settings.strokeOpacity,
-			handwriting: createStrokeHandwriting(this.settings),
+			handwriting: getCanvasStrokeHandwritingForScreenPixels(createStrokeHandwriting(this.settings), screenScale),
 			points: [point],
 			createdAt: Date.now(),
 		};
@@ -5047,9 +5061,7 @@ private hasPendingRasterTileWork(): boolean {
 	}
 
 	private getPenCursorDiameter(): number {
-		const matrix = this.svgEl?.getScreenCTM();
-		const screenScale = matrix ? getSvgScreenScale(matrix) : 1;
-		const diameter = normalizeStrokeWidth(this.settings.strokeWidth) * screenScale;
+		const diameter = normalizeStrokeWidth(this.settings.strokeWidth);
 		return Math.round(Math.min(96, Math.max(8, diameter)));
 	}
 
@@ -5066,12 +5078,13 @@ private hasPendingRasterTileWork(): boolean {
 			return false;
 		}
 
+		const minimumPointDistance = getCanvasDistanceForScreenPixels(MIN_POINT_DISTANCE, this.getCanvasScreenScale());
 		let didAppendPoint = false;
 		const appendPointerEventPoint = (pointerEvent: PointerEvent): void => {
 			const point = toCanvasPoint(pointerEvent);
 			const previousPoint = activeStroke.points[activeStroke.points.length - 1];
 
-			if (!previousPoint || distanceBetween(previousPoint, point) < MIN_POINT_DISTANCE) {
+			if (!previousPoint || distanceBetween(previousPoint, point) < minimumPointDistance) {
 				return;
 			}
 
@@ -10051,6 +10064,21 @@ function isPresent<T>(value: T | null): value is T {
 }
 function distanceBetween(a: StrokePoint, b: StrokePoint): number {
 	return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function getStrokePolylineLength(points: readonly StrokePoint[]): number {
+	let length = 0;
+
+	for (let index = 1; index < points.length; index++) {
+		const previousPoint = points[index - 1];
+		const point = points[index];
+
+		if (previousPoint && point) {
+			length += distanceBetween(previousPoint, point);
+		}
+	}
+
+	return length;
 }
 
 function distanceToPolyline(point: StrokePoint, points: readonly StrokePoint[], stopAtDistance?: number): number {

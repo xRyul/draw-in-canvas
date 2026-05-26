@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
 	createStrokeHandwriting,
+	getStrokeHandwriting,
 	normalizeStrokeHandwriting,
+	shouldUseHandwrittenStrokePathForLength,
 } from "../src/stroke-handwriting.ts";
 import type {DrawInCanvasSettings} from "../src/settings.ts";
 
@@ -60,4 +62,22 @@ void test("keeps stored stroke handwriting independent of fallback settings", ()
 		taperStart: 4,
 		taperEnd: 5,
 	});
+});
+
+void test("preserves zoom-adjusted fractional taper distances stored on strokes", () => {
+	const handwriting = {
+		enabled: true,
+		thinning: 0.5,
+		streamline: 0.5,
+		smoothing: 0.5,
+		taperStart: 0.8,
+		taperEnd: 1.2,
+	};
+
+	assert.deepEqual(getStrokeHandwriting({handwriting}, SETTINGS), handwriting);
+});
+
+void test("uses centerline rendering for very short handwritten strokes to avoid collapsed wedge shapes", () => {
+	assert.equal(shouldUseHandwrittenStrokePathForLength(7.9, 4), false);
+	assert.equal(shouldUseHandwrittenStrokePathForLength(8, 4), true);
 });
