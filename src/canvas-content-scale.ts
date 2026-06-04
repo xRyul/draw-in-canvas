@@ -9,6 +9,7 @@ const CONTENT_SCALE_EPSILON = 0.001;
 export interface CanvasContentScaleNodeData {
 	id?: string;
 	type?: string;
+	file?: string;
 	drawInCanvasScale?: number;
 }
 
@@ -116,8 +117,9 @@ export class NativeCanvasContentScaleSync {
 
 		for (const [nodeId, node] of canvas.nodes?.entries() ?? []) {
 			const data = node.getData?.();
-			const scale = data?.type === "text" ? getContentScaleFromData(data) : DEFAULT_CONTENT_SCALE;
-			const shouldApplyScale = data?.type === "text" && !isDefaultContentScale(scale);
+			const shouldScaleContent = isScalableContentData(data);
+			const scale = shouldScaleContent ? getContentScaleFromData(data) : DEFAULT_CONTENT_SCALE;
+			const shouldApplyScale = shouldScaleContent && !isDefaultContentScale(scale);
 			const contentEl = getNodeContentEl(node);
 
 			if (!contentEl) {
@@ -166,9 +168,10 @@ export class NativeCanvasContentScaleSync {
 		const entry = this.scaledContentByNodeId.get(nodeId);
 		const data = node.getData?.();
 		const contentEl = getNodeContentEl(node);
-		const scale = data?.type === "text" ? getContentScaleFromData(data) : DEFAULT_CONTENT_SCALE;
+		const shouldScaleContent = isScalableContentData(data);
+		const scale = shouldScaleContent ? getContentScaleFromData(data) : DEFAULT_CONTENT_SCALE;
 
-		if (data?.type !== "text") {
+		if (!shouldScaleContent) {
 			clearPreviousContentEl(entry, contentEl);
 
 			if (contentEl) {
@@ -222,7 +225,7 @@ export function getNextNodeContentScale(node: CanvasContentScaleNode, scale: num
 }
 
 export function shouldScaleNodeContent(node: CanvasContentScaleNode): boolean {
-	return node.getData?.().type === "text";
+	return isScalableContentData(node.getData?.());
 }
 
 export function getNodeContentScale(node: CanvasContentScaleNode): number {
@@ -253,6 +256,18 @@ export function applyNodeContentScale(node: CanvasContentScaleNode): void {
 	}
 
 	applyContentScaleStyles(contentEl, scale);
+}
+
+function isScalableContentData(data: CanvasContentScaleNodeData | undefined): boolean {
+	if (data?.type === "text") {
+		return true;
+	}
+
+	return data?.type === "file" && isMarkdownFilePath(data.file);
+}
+
+function isMarkdownFilePath(file: unknown): boolean {
+	return typeof file === "string" && file.toLowerCase().endsWith(".md");
 }
 
 function getContentScaleFromData(data: CanvasContentScaleNodeData | undefined): number {

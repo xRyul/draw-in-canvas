@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	CONTENT_SCALE_CLASS,
 	NativeCanvasContentScaleSync,
+	getNextNodeContentScale,
 	type CanvasContentScaleCanvas,
 	type CanvasContentScaleNode,
 	type CanvasContentScaleNodeData,
@@ -47,11 +48,16 @@ function createContentEl(): FakeContentEl {
 	};
 }
 
-function createNode(id: string, scale?: number): FakeNode {
+function createNode(
+	id: string,
+	scale?: number,
+	dataOverrides: Partial<CanvasContentScaleNodeData> = {},
+): FakeNode {
 	const contentEl = createContentEl();
 	const data: CanvasContentScaleNodeData = {
 		id,
 		type: "text",
+		...dataOverrides,
 		...(scale === undefined ? {} : {drawInCanvasScale: scale}),
 	};
 
@@ -116,6 +122,45 @@ function resetGetDataCalls(nodes: FakeNode[]): void {
 function getTotalGetDataCalls(nodes: FakeNode[]): number {
 	return nodes.reduce((total, node) => total + node.getDataCalls, 0);
 }
+
+void test("markdown file canvas nodes are eligible for scale-button content scaling", () => {
+	const markdownFileNode = createNode("markdown-file", undefined, {
+		type: "file",
+		file: "Notes/List of past exam papers.md",
+	});
+
+	assert.equal(getNextNodeContentScale(markdownFileNode, 0.8), 0.8);
+});
+
+void test("content-scale sync applies saved scales to markdown file canvas nodes", () => {
+	const scenario = createScenario(1, 0);
+	const markdownFileNode = scenario.nodes[0];
+
+	assert.ok(markdownFileNode);
+	markdownFileNode.data.type = "file";
+	markdownFileNode.data.file = "Notes/List of past exam papers.md";
+
+	const contentScaleSync = new NativeCanvasContentScaleSync(() => scenario.containerEl);
+	contentScaleSync.syncForCanvas(scenario.canvas);
+
+	assert.equal(markdownFileNode.contentEl.classList.contains(CONTENT_SCALE_CLASS), true);
+	assert.equal(markdownFileNode.contentEl.styles.transform, "scale(0.5)");
+});
+
+void test("content-scale sync does not scale non-markdown file canvas nodes", () => {
+	const scenario = createScenario(1, 0);
+	const imageFileNode = scenario.nodes[0];
+
+	assert.ok(imageFileNode);
+	imageFileNode.data.type = "file";
+	imageFileNode.data.file = "Images/example.png";
+
+	const contentScaleSync = new NativeCanvasContentScaleSync(() => scenario.containerEl);
+	contentScaleSync.syncForCanvas(scenario.canvas);
+
+	assert.equal(imageFileNode.contentEl.classList.contains(CONTENT_SCALE_CLASS), false);
+	assert.equal(imageFileNode.contentEl.styles.transform, "");
+});
 
 void test("content-scale sync rechecks tracked scaled text nodes instead of rescanning every canvas node", () => {
 	const scenario = createScenario(100, 42);
