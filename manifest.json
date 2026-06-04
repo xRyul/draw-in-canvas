@@ -1,7 +1,7 @@
 {
 	"id": "draw-in-canvas",
 	"name": "Draw in Canvas",
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"minAppVersion": "1.5.0",
 	"description": "Draw freehand annotations on JSON Canvas files.",
 	"author": "xRyul",
