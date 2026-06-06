@@ -1,5 +1,7 @@
 # Draw in Canvas for ObsidianMD
 
+<img width="864" height="628" alt="image" src="https://github.com/user-attachments/assets/facdebaf-86e9-483d-bab3-8a239dbfb2f2" />
+
 Draw, sketch, and handwrite directly on top of Obsidian Canvas files.
 
 Draw in Canvas adds a lightweight drawing layer to `.canvas` files while keeping the normal JSON Canvas data intact.
