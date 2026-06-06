@@ -2,6 +2,12 @@
 
 <img width="864" height="628" alt="image" src="https://github.com/user-attachments/assets/facdebaf-86e9-483d-bab3-8a239dbfb2f2" />
 
+
+
+https://github.com/user-attachments/assets/41acd9e1-5934-4371-af52-62e902aaa838
+
+
+
 Draw, sketch, and handwrite directly on top of Obsidian Canvas files.
 
 Draw in Canvas adds a lightweight drawing layer to `.canvas` files while keeping the normal JSON Canvas data intact.
